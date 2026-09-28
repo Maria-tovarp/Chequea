@@ -243,7 +243,6 @@ String? brandingLockMessage(http.Response response) =>
     ? 'Solo se admiten cuentas de referentes.'
     : null;
 
-/// Obtiene el título de CHEQUEA Branding en las respuestas autenticadas.
 String? brandingNameFromPayload(Map<String, dynamic> payload) {
   const directKeys = [
     'chequea_branding_title',

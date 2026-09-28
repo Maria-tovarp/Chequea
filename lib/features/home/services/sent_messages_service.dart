@@ -26,9 +26,6 @@ class SentMessagesService {
     }
     final result = await _request(session: session, query: query);
 
-    // La API documenta el filtro por celular. Este respaldo permite visualizar
-    // los mensajes antiguos si fueron guardados con un formato distinto (por
-    // ejemplo, con o sin prefijo internacional) en el servidor.
     if (normalizedCellphone == null ||
         normalizedCellphone.isEmpty ||
         result.total > 0) {

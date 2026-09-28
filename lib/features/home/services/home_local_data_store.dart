@@ -2,7 +2,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../auth/models/user_session.dart';
 
-/// Removes locally cached user content when the user explicitly signs out.
 class HomeLocalDataStore {
   const HomeLocalDataStore._();
 

@@ -562,8 +562,6 @@ class _FilterDropdown extends StatelessWidget {
   );
 }
 
-// Kept temporarily to preserve the legacy layout during hot reload.
-// ignore: unused_element
 class _AppointmentCardOld extends StatelessWidget {
   const _AppointmentCardOld({required this.appointment});
   final ReferralAppointment appointment;

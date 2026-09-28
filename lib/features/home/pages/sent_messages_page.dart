@@ -429,7 +429,6 @@ class _DateField extends StatelessWidget {
   );
 }
 
-// ignore: unused_element
 class _MessageItemOld extends StatelessWidget {
   const _MessageItemOld({required this.message, required this.number});
   final SentMessage message;
