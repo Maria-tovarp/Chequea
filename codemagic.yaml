@@ -1,0 +1,21 @@
+workflows:
+  ios-release:
+    name: Chequea iOS
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install Flutter dependencies
+        script: flutter pub get
+      - name: Analyze project
+        script: flutter analyze --no-pub
+      - name: Run tests
+        script: flutter test --no-pub
+      - name: Build iOS app
+        script: flutter build ios --release --no-codesign
+    artifacts:
+      - build/ios/iphoneos/Runner.app
+      - /tmp/xcodebuild_logs/*.log
