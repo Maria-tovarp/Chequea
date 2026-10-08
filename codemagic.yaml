@@ -40,6 +40,9 @@ workflows:
           flutter clean
           rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
 
+          rm -rf ios/Pods
+          rm -f ios/Podfile.lock
+
           flutter pub get
 
           if grep -q "flutter_launcher_icons" pubspec.yaml; then
@@ -48,11 +51,10 @@ workflows:
 
           flutter precache --ios
 
-          if [ -f ios/Podfile ]; then
-            cd ios
-            pod install
-            cd ..
-          fi
+          cd ios
+          pod repo update
+          pod install
+          cd ..
 
           echo "Proyecto preparado para iOS"
 
