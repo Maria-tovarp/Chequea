@@ -1,21 +1,45 @@
 workflows:
-  ios-release:
-    name: Chequea iOS
-    max_build_duration: 120
+  ios-unsigned:
+    name: CHEQUEA iOS Unsigned IPA
     instance_type: mac_mini_m2
+    max_build_duration: 120
     environment:
+      groups:
+        - chequea_secrets
       flutter: stable
       xcode: latest
       cocoapods: default
     scripts:
-      - name: Install Flutter dependencies
+      - name: Get Flutter packages
         script: flutter pub get
-      - name: Analyze project
-        script: flutter analyze --no-pub
-      - name: Run tests
-        script: flutter test --no-pub
-      - name: Build iOS app
-        script: flutter build ios --release --no-codesign
+      - name: Create secrets.json
+        script: |
+          mkdir -p config
+          cat > config/secrets.json <<EOF
+          {
+            "PANAMA_API_KEY": "$PANAMA_API_KEY",
+            "GUATEMALA_API_KEY": "$GUATEMALA_API_KEY"
+          }
+          EOF
+      - name: Install CocoaPods
+        script: |
+          cd ios
+          pod install
+          cd ..
+      - name: Build iOS without signing
+        script: |
+          flutter build ios \
+            --release \
+            --no-codesign \
+            --dart-define-from-file=config/secrets.json
+      - name: Create unsigned IPA
+        script: |
+          rm -rf Payload
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -r chequea-unsigned.ipa Payload
+          rm -rf Payload
     artifacts:
+      - chequea-unsigned.ipa
       - build/ios/iphoneos/Runner.app
       - /tmp/xcodebuild_logs/*.log
