@@ -1,73 +1,98 @@
 workflows:
-  ios-unsigned:
-    name: CHEQUEA iOS Unsigned
+  ios-unsigned-workflow:
+    name: Chequea iOS sin firma
     instance_type: mac_mini_m2
     max_build_duration: 120
 
     environment:
       groups:
-        - chequea_secrets
-      flutter: stable
-      xcode: latest
+        - api_keys
+      flutter: 3.41.9
+      xcode: 16.4
       cocoapods: default
 
-    cache:
-      cache_paths:
-        - ~/.pub-cache
-        - ~/Library/Caches/CocoaPods
-
     scripts:
-      - name: Get Flutter packages
+      - name: Verificar versiones Flutter y Dart
         script: |
+          set -e
+          flutter --version
+          dart --version
+
+      - name: Validar API Keys
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+
+          : "${PANAMA_API_KEY:?ERROR: falta PANAMA_API_KEY}"
+          : "${GUATEMALA_API_KEY:?ERROR: falta GUATEMALA_API_KEY}"
+
+          echo "API Keys configuradas correctamente"
+
+      - name: Preparar proyecto Flutter para iOS
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+
+          rm -f ios/Flutter/Generated.xcconfig
+          rm -f ios/Flutter/flutter_export_environment.sh
+          rm -rf ios/Flutter/ephemeral
+
+          flutter clean
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
+
           flutter pub get
 
-      - name: Create secrets.json
+          if grep -q "flutter_launcher_icons" pubspec.yaml; then
+            dart run flutter_launcher_icons
+          fi
+
+          flutter precache --ios
+
+          if [ -f ios/Podfile ]; then
+            cd ios
+            pod install
+            cd ..
+          fi
+
+          echo "Proyecto preparado para iOS"
+
+      - name: Compilar iOS sin firma en Release
         script: |
-          mkdir -p config
-          cat > config/secrets.json <<EOF
-          {
-            "PANAMA_API_KEY": "$PANAMA_API_KEY",
-            "GUATEMALA_API_KEY": "$GUATEMALA_API_KEY"
-          }
-          EOF
-
-          echo "secrets.json created"
-          test -s config/secrets.json
-
-      - name: Install CocoaPods
-        script: |
-          find ios -name "Podfile" -execdir pod install \;
-
-      - name: Build unsigned iOS app
-        script: |
-          flutter build ios \
-            --release \
-            --no-codesign \
-            --dart-define-from-file=config/secrets.json
-
-      - name: Verify Runner.app
-        script: |
-          test -d build/ios/iphoneos/Runner.app
-          echo "Runner.app found"
-
-      - name: Package unsigned IPA
-        script: |
-          rm -rf "$CM_BUILD_DIR/Payload"
-          mkdir -p "$CM_BUILD_DIR/Payload"
-
-          cp -R \
-            "$CM_BUILD_DIR/build/ios/iphoneos/Runner.app" \
-            "$CM_BUILD_DIR/Payload/"
-
+          set -e
           cd "$CM_BUILD_DIR"
-          zip -qry chequea-unsigned.ipa Payload
 
-          rm -rf "$CM_BUILD_DIR/Payload"
+          flutter build ios --release --no-codesign \
+            --dart-define=PANAMA_API_KEY="$PANAMA_API_KEY" \
+            --dart-define=GUATEMALA_API_KEY="$GUATEMALA_API_KEY"
 
-          echo "Unsigned IPA created:"
-          ls -lh "$CM_BUILD_DIR/chequea-unsigned.ipa"
+      - name: Crear IPA sin firma
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR/build/ios/iphoneos"
+
+          if [ ! -d "Runner.app" ]; then
+            echo "ERROR: Runner.app no fue encontrado"
+            exit 1
+          fi
+
+          rm -rf Payload
+          rm -f Chequea-unsigned.ipa
+
+          mkdir Payload
+          cp -R Runner.app Payload/
+
+          ditto -c -k \
+            --sequesterRsrc \
+            --keepParent \
+            Payload \
+            Chequea-unsigned.ipa
+
+          test -f Chequea-unsigned.ipa
+
+          echo "IPA sin firma creado correctamente"
+          ls -lh Chequea-unsigned.ipa
 
     artifacts:
-      - chequea-unsigned.ipa
-      - build/ios/iphoneos/**/*.app
+      - build/ios/iphoneos/Chequea-unsigned.ipa
+      - build/ios/iphoneos/Runner.app
       - /tmp/xcodebuild_logs/*.log
