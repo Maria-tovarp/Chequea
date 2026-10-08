@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -11,6 +14,7 @@ import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/config/app_config.dart';
+import '../../../core/navigation/app_page_route.dart';
 import '../../auth/models/user_session.dart';
 import '../../auth/pages/login_page.dart';
 import '../../auth/services/session_store.dart';
@@ -34,11 +38,14 @@ class _HomePageState extends State<HomePage> {
   final List<_ExamOption> _selectedExams = [];
   final _imagePicker = ImagePicker();
   final _audioRecorder = AudioRecorder();
+  final _audioPlayer = AudioPlayer();
   final _notes = TextEditingController();
   final _cellphone = TextEditingController();
+  final _homeScrollController = ScrollController();
   XFile? _orderPhoto;
   String? _audioPath;
   bool _isRecording = false;
+  bool _isPlayingAudio = false;
   bool _sending = false;
   bool _isSearchingExams = false;
   final _messageService = const MessageService();
@@ -53,6 +60,9 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _cellphone.addListener(_saveDraft);
     _notes.addListener(_saveDraft);
+    _audioPlayer.onPlayerComplete.listen((_) {
+      if (mounted) setState(() => _isPlayingAudio = false);
+    });
     _restoreDraft();
   }
 
@@ -62,7 +72,9 @@ class _HomePageState extends State<HomePage> {
     _notes.removeListener(_saveDraft);
     _notes.dispose();
     _cellphone.dispose();
+    _homeScrollController.dispose();
     _audioRecorder.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
@@ -70,16 +82,30 @@ class _HomePageState extends State<HomePage> {
     final draft = await HomeDraftStore.load(widget.session);
     if (!mounted || draft == null) return;
     final exams = draft['exams'];
+    final savedAudioPath = draft['audioPath']?.toString();
+    final audioPath =
+        savedAudioPath == null ||
+            savedAudioPath.isEmpty ||
+            !savedAudioPath.toLowerCase().endsWith('.m4a')
+        ? null
+        : await File(savedAudioPath).exists()
+        ? savedAudioPath
+        : null;
+    if (!mounted) return;
     setState(() {
-      _inputMode = draft['inputMode']?.toString() ?? 'exams';
+      final savedMode = draft['inputMode']?.toString();
+      _inputMode = switch (savedMode) {
+        'photo' => 'photo',
+        'voice' => 'voice',
+        _ => 'exams',
+      };
       _cellphone.text = draft['cellphone']?.toString() ?? '';
       _notes.text = draft['notes']?.toString() ?? '';
       final photoPath = draft['orderPhotoPath']?.toString();
       _orderPhoto = photoPath == null || photoPath.isEmpty
           ? null
           : XFile(photoPath);
-      final audioPath = draft['audioPath']?.toString();
-      _audioPath = audioPath == null || audioPath.isEmpty ? null : audioPath;
+      _audioPath = audioPath;
       if (exams is List) {
         _selectedExams
           ..clear()
@@ -170,13 +196,43 @@ class _HomePageState extends State<HomePage> {
       }
       return;
     }
-    final directory = await getTemporaryDirectory();
+    final directory = await getApplicationDocumentsDirectory();
     await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.opus),
+      const RecordConfig(encoder: AudioEncoder.aacLc),
       path:
-          '${directory.path}/nota-${DateTime.now().millisecondsSinceEpoch}.ogg',
+          '${directory.path}/nota-${DateTime.now().millisecondsSinceEpoch}.m4a',
     );
     if (mounted) setState(() => _isRecording = true);
+  }
+
+  Future<void> _toggleAudioPreview() async {
+    final audioPath = _audioPath;
+    if (audioPath == null || _isRecording) return;
+    if (!audioPath.toLowerCase().endsWith('.m4a') ||
+        !await File(audioPath).exists()) {
+      if (mounted) {
+        setState(() => _audioPath = null);
+        _saveDraft();
+        _info(
+          'Nota de voz',
+          'La grabación ya no está disponible. Grabe una nueva nota de voz.',
+        );
+      }
+      return;
+    }
+    try {
+      if (_isPlayingAudio) {
+        await _audioPlayer.pause();
+        if (mounted) setState(() => _isPlayingAudio = false);
+        return;
+      }
+      await _audioPlayer.play(DeviceFileSource(audioPath));
+      if (mounted) setState(() => _isPlayingAudio = true);
+    } on Exception {
+      if (mounted) {
+        _info('Nota de voz', 'No fue posible reproducir la nota de voz.');
+      }
+    }
   }
 
   Future<void> _pickImageFile() async {
@@ -203,11 +259,36 @@ class _HomePageState extends State<HomePage> {
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+        contentPadding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        title: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Color(0xFF009FA4)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF10264C),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(color: Color(0xFF435678), height: 1.35),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF009FA4),
+            ),
             child: const Text('Cerrar'),
           ),
         ],
@@ -249,6 +330,14 @@ class _HomePageState extends State<HomePage> {
       );
       return;
     }
+    if (mode == 'audio' && !await File(filePath!).exists()) {
+      if (mounted) setState(() => _audioPath = null);
+      _saveDraft();
+      _showMessage(
+        'La grabación ya no está disponible. Grabe una nueva nota de voz.',
+      );
+      return;
+    }
     if (_isRecording) {
       _showMessage('Detenga la grabación antes de enviar.');
       return;
@@ -267,7 +356,7 @@ class _HomePageState extends State<HomePage> {
     );
     if (!mounted) return;
     setState(() => _sending = false);
-    _showMessage(result.message);
+    _showMessage(result.message, success: result.success);
     if (!result.success) return;
     setState(() {
       _cellphone.clear();
@@ -280,9 +369,39 @@ class _HomePageState extends State<HomePage> {
     HomeDraftStore.clear(widget.session);
   }
 
-  void _showMessage(String message) => ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(message)));
+  void _showMessage(String message, {bool success = false}) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        duration: Duration(seconds: success ? 6 : 4),
+        backgroundColor: success
+            ? const Color(0xFF087E7A)
+            : const Color(0xFF10264C),
+        content: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              success ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+              color: Colors.white,
+              size: 21,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _refreshClinicsPreview() async {
     final requestId = ++_clinicsRequestId;
@@ -315,227 +434,635 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  String get _welcomeText {
+  String get _displayName {
     final fullName = widget.session.fullName?.trim();
     if (fullName == null || fullName.isEmpty) {
-      return 'Bienvenid@, ${widget.session.username}.';
+      return widget.session.username;
     }
-    return 'Bienvenid@, ${widget.session.username} ($fullName).';
+    return fullName;
   }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF47D1B6),
-    body: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 405),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 40, 24, 20),
-          child: Column(
-            children: [
-              Image.asset('assets/images/logo-prod-chequea.png', width: 360),
-              const SizedBox(height: 8),
-              Text(
-                '${AppConfig.countries.firstWhere((item) => item.name == widget.session.country).flag}  ${widget.session.country}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: _cellphone,
-                style: const TextStyle(color: Color(0xFF1A1A1A)),
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  hintText: 'Celular',
-                  prefixIcon: Icon(Icons.phone),
-                ),
-              ),
-              const SizedBox(height: 14),
-              _InputModeSelector(
-                selectedMode: _inputMode,
-                onSelected: (mode) {
-                  setState(() => _inputMode = mode);
-                  _saveDraft();
-                },
-              ),
-              if (_orderPhoto != null || _audioPath != null || _isRecording)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _isRecording
-                          ? 'Grabando nota de voz… toque “Grabar nota” para detener.'
-                          : _orderPhoto != null
-                          ? 'Orden médica adjunta.'
-                          : 'Nota de voz adjunta.',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
+  Future<void> _logout() async {
+    await HomeLocalDataStore.clearFor(widget.session);
+    await SessionStore.clear();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (_) => false,
+    );
+  }
+
+  void _selectInputMode(String mode) {
+    final nextMode = _inputMode == mode ? 'exams' : mode;
+    if (_isRecording && nextMode != 'voice') {
+      _audioRecorder.stop();
+    }
+    setState(() {
+      _inputMode = nextMode;
+      if (nextMode != 'voice') _isRecording = false;
+    });
+    _saveDraft();
+    _scrollHomeToTop();
+  }
+
+  void _scrollHomeToTop() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_homeScrollController.hasClients) {
+        _homeScrollController.jumpTo(0);
+      }
+    });
+  }
+
+  Widget _fixedHeader() => Container(
+    color: Colors.white,
+    padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFE5F8F7),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.monitor_heart_rounded,
+                      color: Color(0xFF009FA4),
+                      size: 27,
                     ),
                   ),
-                ),
-              const SizedBox(height: 6),
-              if (_inputMode == 'exams') ...[
-                _ExamSelector(
-                  session: widget.session,
-                  onSelected: _addExam,
-                  onSearchActivity: (isSearching) =>
-                      setState(() => _isSearchingExams = isSearching),
-                ),
-                const SizedBox(height: 14),
-                if (_selectedExams.isNotEmpty)
-                  _SelectedExamsSummary(
-                    exams: _selectedExams,
-                    totalClinics: _totalClinics,
-                    isLoading: _loadingClinics,
-                    onRemove: _removeExam,
-                    onShowClinics:
-                        widget.session.isChequeandomeAgent &&
-                            _clinicsListUrl != null &&
-                            (_totalClinics ?? 0) > 0
-                        ? _openClinicsPreview
-                        : null,
-                  )
-                else if (widget.session.isChequeandomeAgent &&
-                    !_isSearchingExams) ...[
-                  TextField(
-                    controller: _notes,
-                    maxLines: 4,
-                    maxLength: 1000,
-                    style: const TextStyle(color: Color(0xFF1A1A1A)),
-                    decoration: const InputDecoration(
-                      fillColor: Colors.white,
-                      hintText:
-                          'En esta caja de texto puede escribir exámenes que no tenga Chequeándome. Máximo 1000 caracteres.',
-                    ),
-                  ),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Si elije uno o más exámenes no podrá utilizar esta caja de texto.',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
+                  const SizedBox(width: 9),
+                  const Text(
+                    'Chequea',
+                    style: TextStyle(
+                      color: Color(0xFF10264C),
+                      fontSize: 27,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -.8,
                     ),
                   ),
                 ],
-              ],
-              if (_inputMode == 'photo')
-                _AttachmentPane(
-                  title: 'Adjunte imagen:',
-                  attachmentLabel: _orderPhoto == null
-                      ? null
-                      : 'Imagen adjunta.',
-                  primaryLabel: 'Desde archivos',
-                  primaryIcon: Icons.attach_file,
-                  onPrimary: _pickImageFile,
-                  secondaryLabel: 'Tomar foto',
-                  secondaryIcon: Icons.camera_alt,
-                  onSecondary: _pickOrderPhoto,
+              ),
+            ),
+            _countrySelector(),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 16, 12, 16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0FAFF),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Row(
+            children: [
+              ClipOval(
+                child: Image.asset(
+                  'assets/images/Perfil doctores.png',
+                  width: 68,
+                  height: 68,
+                  fit: BoxFit.cover,
                 ),
-              if (_inputMode == 'voice')
-                _AttachmentPane(
-                  title: 'Adjunte nota de voz:',
-                  attachmentLabel: _isRecording
-                      ? 'Grabando… toque “Detener grabación” al terminar.'
-                      : _audioPath == null
-                      ? null
-                      : 'Nota de voz adjunta.',
-                  secondaryLabel: _isRecording
-                      ? 'Detener grabación'
-                      : 'Grabar nota',
-                  secondaryIcon: _isRecording ? Icons.stop_circle : Icons.mic,
-                  onSecondary: _toggleVoiceNote,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  _displayName,
+                  maxLines: 2,
+                  softWrap: true,
+                  style: const TextStyle(
+                    color: Color(0xFF10264C),
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              const SizedBox(height: 28),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _sending ? null : _sendMessage,
-                  icon: _sending
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : SvgPicture.asset(
-                          'assets/svg/whatsapp.svg',
-                          width: 16,
-                          colorFilter: const ColorFilter.mode(
-                            Colors.white,
-                            BlendMode.srcIn,
+              ),
+              IconButton(
+                tooltip: 'Cerrar sesión',
+                onPressed: _logout,
+                icon: const Icon(Icons.logout_outlined, size: 29),
+                color: const Color(0xFF24364B),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _countrySelector() => Container(
+    padding: const EdgeInsets.fromLTRB(11, 8, 8, 8),
+    decoration: BoxDecoration(
+      color: const Color(0xFFE8F8F6),
+      border: Border.all(color: const Color(0xFFCBECE8)),
+      borderRadius: BorderRadius.circular(24),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          AppConfig.countries
+              .firstWhere((item) => item.name == widget.session.country)
+              .flag,
+          style: const TextStyle(fontSize: 15),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          widget.session.country,
+          style: const TextStyle(
+            color: Color(0xFF24364B),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.white,
+    body: SafeArea(
+      child: Stack(
+        children: [
+          Positioned.fill(
+            top: 166,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 405),
+                child: LayoutBuilder(
+                  builder: (context, constraints) => SingleChildScrollView(
+                    controller: _homeScrollController,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight,
+                      ),
+                      child: IntrinsicHeight(
+                        child: Transform.translate(
+                          offset: Offset.zero,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Offstage(
+                                offstage: true,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                            width: 42,
+                                            height: 42,
+                                            decoration: const BoxDecoration(
+                                              color: Color(0xFFE5F8F7),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.monitor_heart_rounded,
+                                              color: Color(0xFF009FA4),
+                                              size: 27,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 9),
+                                          const Text(
+                                            'Chequea',
+                                            style: TextStyle(
+                                              color: Color(0xFF10264C),
+                                              fontSize: 27,
+                                              fontWeight: FontWeight.w800,
+                                              letterSpacing: -.8,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        11,
+                                        8,
+                                        8,
+                                        8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFE8F8F6),
+                                        border: Border.all(
+                                          color: const Color(0xFFCBECE8),
+                                        ),
+                                        borderRadius: BorderRadius.circular(24),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            AppConfig.countries
+                                                .firstWhere(
+                                                  (item) =>
+                                                      item.name ==
+                                                      widget.session.country,
+                                                )
+                                                .flag,
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            widget.session.country,
+                                            style: const TextStyle(
+                                              color: Color(0xFF24364B),
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 2),
+                                          const Icon(
+                                            Icons.keyboard_arrow_down_rounded,
+                                            color: Color(0xFF009FA4),
+                                            size: 18,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              Offstage(
+                                offstage: true,
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    16,
+                                    12,
+                                    16,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF0FAFF),
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      ClipOval(
+                                        child: Image.asset(
+                                          'assets/images/Perfil doctores.png',
+                                          width: 68,
+                                          height: 68,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 14),
+                                      Expanded(
+                                        child: Text(
+                                          _displayName,
+                                          maxLines: 2,
+                                          softWrap: true,
+                                          style: const TextStyle(
+                                            color: Color(0xFF10264C),
+                                            fontSize: 19,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Cerrar sesión',
+                                        onPressed: _logout,
+                                        icon: const Icon(
+                                          Icons.logout_outlined,
+                                          size: 19,
+                                        ),
+                                        color: const Color(0xFF24364B),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: _cellphone,
+                                style: const TextStyle(
+                                  color: Color(0xFF1A1A1A),
+                                  fontSize: 14,
+                                ),
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                decoration: InputDecoration(
+                                  hintText: 'Número de WhatsApp del paciente',
+                                  hintStyle: const TextStyle(fontSize: 14),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  prefixIcon: Padding(
+                                    padding: const EdgeInsets.all(11),
+                                    child: SvgPicture.asset(
+                                      'assets/svg/whatsapp.svg',
+                                      colorFilter: const ColorFilter.mode(
+                                        Color(0xFF25D366),
+                                        BlendMode.srcIn,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              if (_orderPhoto != null ||
+                                  _audioPath != null ||
+                                  _isRecording)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      _isRecording
+                                          ? 'Grabando nota de voz… toque “Grabar nota” para detener.'
+                                          : _orderPhoto != null
+                                          ? 'Orden médica adjunta.'
+                                          : 'Nota de voz adjunta.',
+                                      style: const TextStyle(
+                                        color: Color(0xFF24364B),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(height: 6),
+                              if (_inputMode == 'exams') ...[
+                                _ExamSelector(
+                                  session: widget.session,
+                                  onSelected: _addExam,
+                                  onSearchActivity: (isSearching) => setState(
+                                    () => _isSearchingExams = isSearching,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                                if (_selectedExams.isNotEmpty)
+                                  _SelectedExamsSummary(
+                                    exams: _selectedExams,
+                                    totalClinics: _totalClinics,
+                                    isLoading: _loadingClinics,
+                                    onRemove: _removeExam,
+                                    onClear: _clearExams,
+                                    onShowClinics:
+                                        widget.session.isChequeandomeAgent &&
+                                            _clinicsListUrl != null &&
+                                            (_totalClinics ?? 0) > 0
+                                        ? _openClinicsPreview
+                                        : null,
+                                  )
+                                else if (widget.session.isChequeandomeAgent &&
+                                    !_isSearchingExams) ...[
+                                  TextField(
+                                    controller: _notes,
+                                    maxLines: 4,
+                                    maxLength: 1000,
+                                    style: const TextStyle(
+                                      color: Color(0xFF1A1A1A),
+                                    ),
+                                    decoration: const InputDecoration(
+                                      fillColor: Colors.white,
+                                      hintText:
+                                          'En esta caja de texto puede escribir exámenes que no tenga Chequeándome. Máximo 1000 caracteres.',
+                                    ),
+                                  ),
+                                  const Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      'Si elije uno o más exámenes no podrá utilizar esta caja de texto.',
+                                      style: TextStyle(
+                                        color: Color(0xFF24364B),
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                              if (_inputMode == 'photo')
+                                _AttachmentPane(
+                                  title: 'Adjunte imagen:',
+                                  attachmentLabel: _orderPhoto == null
+                                      ? null
+                                      : 'Imagen adjunta.',
+                                  primaryLabel: 'Desde archivos',
+                                  primaryIcon: Icons.attach_file,
+                                  onPrimary: _pickImageFile,
+                                  secondaryLabel: 'Tomar foto',
+                                  secondaryIcon: Icons.camera_alt,
+                                  onSecondary: _pickOrderPhoto,
+                                ),
+                              if (_inputMode == 'voice')
+                                _AttachmentPane(
+                                  title: 'Adjunte nota de voz:',
+                                  previewLabel:
+                                      _audioPath == null || _isRecording
+                                      ? null
+                                      : _isPlayingAudio
+                                      ? 'Pausar nota de voz'
+                                      : 'Escuchar nota de voz',
+                                  previewIcon: _isPlayingAudio
+                                      ? Icons.pause_circle_outline
+                                      : Icons.play_circle_outline,
+                                  onPreview: _audioPath == null || _isRecording
+                                      ? null
+                                      : _toggleAudioPreview,
+                                  attachmentLabel: _isRecording
+                                      ? 'Grabando… toque “Detener grabación” al terminar.'
+                                      : _audioPath == null
+                                      ? null
+                                      : 'Nota de voz adjunta.',
+                                  secondaryLabel: _isRecording
+                                      ? 'Detener grabación'
+                                      : 'Grabar nota',
+                                  secondaryIcon: _isRecording
+                                      ? Icons.stop_circle
+                                      : Icons.mic,
+                                  onSecondary: _toggleVoiceNote,
+                                ),
+                              const SizedBox(height: 28),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: _sending ? null : _sendMessage,
+                                  icon: _sending
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.send_rounded,
+                                          size: 22,
+                                        ),
+                                  label: Text(
+                                    _sending ? 'ENVIANDO…' : 'ENVIAR',
+                                    style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: .3,
+                                    ),
+                                  ),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: const Color(0xFF009FA4),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 50),
+                              _InputModeSelector(
+                                selectedMode: _inputMode,
+                                onSelected: _selectInputMode,
+                              ),
+                              const SizedBox(height: 8),
+                              Center(
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Image.asset(
+                                      'assets/images/Tres estrellas.png',
+                                      width: 26,
+                                      height: 26,
+                                    ),
+                                    const SizedBox(width: 7),
+                                    const Text(
+                                      'Impulsado por Inteligencia Artificial',
+                                      style: TextStyle(
+                                        color: Color(0xFF647194),
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 46),
+                            ],
                           ),
                         ),
-                  label: Text(_sending ? 'ENVIANDO…' : 'ENVIAR'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF24364B),
+                      ),
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: 48),
-              Text(
-                _welcomeText,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 10),
-              _Action(
-                label: 'MIS ENVIADOS',
-                icon: Icons.send,
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => SentMessagesPage(session: widget.session),
+            ),
+          ),
+          Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 405),
+              child: _fixedHeader(),
+            ),
+          ),
+        ],
+      ),
+    ),
+    bottomNavigationBar: Container(
+      color: Colors.white,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: Color(0xFFD5DEF0))),
+          ),
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(0, 10, 0, 14),
+          child: Row(
+            children: [
+              Expanded(
+                child: _Action(
+                  label: 'Enviar\nmensaje',
+                  selected: true,
+                  icon: SvgPicture.asset(
+                    'assets/svg/health-checkup.svg',
+                    width: 25,
+                    height: 25,
+                    colorFilter: const ColorFilter.mode(
+                      Color(0xFF009FA4),
+                      BlendMode.srcIn,
+                    ),
+                  ),
+                  onPressed: () => _homeScrollController.animateTo(
+                    0,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
                   ),
                 ),
               ),
-              _Action(
-                label: 'MIS REFERENCIAS',
-                icon: Icons.calendar_month,
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        ReferredAppointmentsPage(session: widget.session),
+              const SizedBox(
+                height: 42,
+                child: VerticalDivider(color: Color(0xFFD5DEF0)),
+              ),
+              Expanded(
+                child: _Action(
+                  label: 'Mis enviados',
+                  icon: SvgPicture.asset(
+                    'assets/svg/Icono de enviados - líneas celeste.svg',
+                    width: 29,
+                    height: 29,
+                    colorFilter: const ColorFilter.mode(
+                      Color(0xFF10264C),
+                      BlendMode.srcIn,
+                    ),
+                  ),
+                  onPressed: () => Navigator.of(context).push(
+                    appPageRoute(SentMessagesPage(session: widget.session)),
                   ),
                 ),
               ),
-              _Action(
-                label: 'COPIAR MI ENLACE DE INVITACIÓN',
-                icon: Icons.content_copy,
-                onPressed: () => _info(
-                  'Enlace copiado',
-                  'El enlace de invitación está listo para compartir.',
+              const SizedBox(
+                height: 42,
+                child: VerticalDivider(color: Color(0xFFD5DEF0)),
+              ),
+              Expanded(
+                child: _Action(
+                  label: 'Mis referencias',
+                  icon: SvgPicture.asset(
+                    'assets/svg/Icono de referencias - líneas celestes.svg',
+                    width: 29,
+                    height: 29,
+                    colorFilter: const ColorFilter.mode(
+                      Color(0xFF10264C),
+                      BlendMode.srcIn,
+                    ),
+                  ),
+                  onPressed: () => Navigator.of(context).push(
+                    appPageRoute(
+                      ReferredAppointmentsPage(session: widget.session),
+                    ),
+                  ),
                 ),
               ),
-              TextButton.icon(
-                onPressed: () async {
-                  await HomeLocalDataStore.clearFor(widget.session);
-                  await SessionStore.clear();
-                  if (!context.mounted) return;
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => const LoginPage()),
-                    (_) => false,
-                  );
-                },
-                icon: const Icon(Icons.logout, color: Colors.white),
-                label: const Text(
-                  'Cerrar sesión',
-                  style: TextStyle(
-                    color: Colors.white,
-                    decoration: TextDecoration.underline,
+              const SizedBox(
+                height: 42,
+                child: VerticalDivider(color: Color(0xFFD5DEF0)),
+              ),
+              Expanded(
+                child: _Action(
+                  label: 'Invitar a un amigo',
+                  icon: SvgPicture.asset(
+                    'assets/svg/Icono de invitar amigo - celeste.svg',
+                    width: 29,
+                    height: 29,
+                  ),
+                  onPressed: () => _info(
+                    'Enlace copiado',
+                    'El enlace de invitación está listo para compartir.',
                   ),
                 ),
               ),
@@ -558,12 +1085,21 @@ class _HomePageState extends State<HomePage> {
     });
     _refreshClinicsPreview();
     _saveDraft();
+    _scrollHomeToTop();
   }
 
   void _removeExam(_ExamOption exam) {
     setState(() => _selectedExams.remove(exam));
     _refreshClinicsPreview();
     _saveDraft();
+    _scrollHomeToTop();
+  }
+
+  void _clearExams() {
+    setState(_selectedExams.clear);
+    _refreshClinicsPreview();
+    _saveDraft();
+    _scrollHomeToTop();
   }
 }
 
@@ -572,26 +1108,34 @@ class _Action extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.onPressed,
+    this.selected = false,
   });
   final String label;
-  final IconData icon;
+  final Widget icon;
   final VoidCallback onPressed;
+  final bool selected;
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 7),
-    child: SizedBox(
-      width: double.infinity,
-      height: 44,
-      child: OutlinedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 18),
-        label: Text(label),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.white,
-          side: const BorderSide(color: Colors.white, width: 2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+  Widget build(BuildContext context) => TextButton(
+    onPressed: onPressed,
+    style: TextButton.styleFrom(
+      foregroundColor: selected
+          ? const Color(0xFF009FA4)
+          : const Color(0xFF10264C),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(width: 29, height: 29, child: Center(child: icon)),
+        const SizedBox(height: 5),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
         ),
-      ),
+      ],
     ),
   );
 }
@@ -623,16 +1167,18 @@ class _SelectedExamsSummary extends StatelessWidget {
     required this.totalClinics,
     required this.isLoading,
     required this.onRemove,
+    required this.onClear,
     required this.onShowClinics,
   });
   final List<_ExamOption> exams;
   final int? totalClinics;
   final bool isLoading;
   final ValueChanged<_ExamOption> onRemove;
+  final VoidCallback onClear;
   final VoidCallback? onShowClinics;
 
-  @override
-  Widget build(BuildContext context) => Column(
+  @pragma('vm:entry-point')
+  Widget _legacyBuild(BuildContext context) => Column(
     children: [
       ...exams.map(
         (exam) => Padding(
@@ -656,7 +1202,7 @@ class _SelectedExamsSummary extends StatelessWidget {
                 child: Text(
                   exam.title,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: Color(0xFF24364B),
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                   ),
@@ -710,6 +1256,147 @@ class _SelectedExamsSummary extends StatelessWidget {
         ),
     ],
   );
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Exámenes seleccionados (${exams.length})',
+              style: const TextStyle(
+                color: Color(0xFF10264C),
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: onClear,
+            icon: const Icon(Icons.delete_outline_rounded, size: 20),
+            label: const Text('Limpiar todos', style: TextStyle(fontSize: 12)),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF009FA4),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 7),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: exams
+            .map(
+              (exam) =>
+                  _SelectedExamChip(exam: exam, onRemove: () => onRemove(exam)),
+            )
+            .toList(),
+      ),
+      const SizedBox(height: 14),
+      if (isLoading)
+        const Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 10),
+            Text('Buscando clínicas disponibles…'),
+          ],
+        )
+      else
+        InkWell(
+          onTap: onShowClinics,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                const FaIcon(
+                  FontAwesomeIcons.hospital,
+                  color: Color(0xFF009FA4),
+                  size: 27,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    totalClinics == 0
+                        ? 'No hay clínicas disponibles para esta combinación.'
+                        : '${totalClinics ?? 0} ${(totalClinics ?? 0) == 1 ? 'clínica disponible' : 'clínicas disponibles'} para esta combinación.',
+                    style: const TextStyle(
+                      color: Color(0xFF647194),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (onShowClinics != null)
+                  const Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 15,
+                    color: Color(0xFF009FA4),
+                  ),
+              ],
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
+class _SelectedExamChip extends StatelessWidget {
+  const _SelectedExamChip({required this.exam, required this.onRemove});
+  final _ExamOption exam;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: BoxConstraints(
+      maxWidth: MediaQuery.sizeOf(context).width - 70,
+    ),
+    padding: const EdgeInsets.fromLTRB(7, 6, 10, 6),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF0FAFF),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: onRemove,
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            width: 27,
+            height: 27,
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFF00AFA7)),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.close_rounded,
+              size: 18,
+              color: Color(0xFF00AFA7),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            exam.title,
+            softWrap: true,
+            style: const TextStyle(
+              color: Color(0xFF10264C),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _InputModeSelector extends StatelessWidget {
@@ -721,38 +1408,60 @@ class _InputModeSelector extends StatelessWidget {
   final ValueChanged<String> onSelected;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 46,
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          flex: 1,
-          child: _ModeButton(
-            label: 'Lista de exámenes',
-            icon: Icons.format_list_bulleted,
-            selected: selectedMode == 'exams',
+  Widget build(BuildContext context) => Column(
+    children: [
+      if (selectedMode == 'photo' || selectedMode == 'voice') ...[
+        SizedBox(
+          width: double.infinity,
+          height: 41,
+          child: OutlinedButton.icon(
             onPressed: () => onSelected('exams'),
+            icon: const Icon(Icons.format_list_bulleted_rounded, size: 16),
+            label: const Text('Lista de exámenes'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF10264C),
+              side: const BorderSide(color: Color(0xFF009FA4)),
+              padding: EdgeInsets.zero,
+              textStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ),
-        const SizedBox(width: 4),
-        _ModeLabel(
-          icon: Icons.camera_alt,
-          label: 'Orden médica',
-          selected: selectedMode == 'photo',
-          flex: 1,
-          onPressed: () => onSelected('photo'),
-        ),
-        const SizedBox(width: 4),
-        _ModeLabel(
-          icon: Icons.mic,
-          label: 'Grabar nota',
-          selected: selectedMode == 'voice',
-          flex: 1,
-          onPressed: () => onSelected('voice'),
-        ),
+        const SizedBox(height: 14),
       ],
-    ),
+      SizedBox(
+        height: 86,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _SecondaryModeAction(
+                icon: Icons.camera_alt_outlined,
+                label: 'Orden médica',
+                selected: selectedMode == 'photo',
+                enabled: true,
+                onPressed: () => onSelected('photo'),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: VerticalDivider(color: Color(0xFFD5DEF0)),
+            ),
+            Expanded(
+              child: _SecondaryModeAction(
+                icon: Icons.keyboard_voice_rounded,
+                label: 'Nota de voz',
+                selected: selectedMode == 'voice',
+                enabled: true,
+                onPressed: () => onSelected('voice'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
   );
 }
 
@@ -766,12 +1475,18 @@ class _AttachmentPane extends StatelessWidget {
     this.primaryLabel,
     this.primaryIcon,
     this.onPrimary,
+    this.previewLabel,
+    this.previewIcon,
+    this.onPreview,
   });
   final String title;
   final String? attachmentLabel;
   final String? primaryLabel;
   final IconData? primaryIcon;
   final VoidCallback? onPrimary;
+  final String? previewLabel;
+  final IconData? previewIcon;
+  final VoidCallback? onPreview;
   final String secondaryLabel;
   final IconData secondaryIcon;
   final VoidCallback? onSecondary;
@@ -782,7 +1497,8 @@ class _AttachmentPane extends StatelessWidget {
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFFD5DEF0)),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -795,13 +1511,13 @@ class _AttachmentPane extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        if (primaryLabel != null) ...[
+        if (primaryLabel case final label?) ...[
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: onPrimary,
               icon: Icon(primaryIcon),
-              label: Text(primaryLabel!),
+              label: Text(label),
             ),
           ),
           const SizedBox(height: 8),
@@ -814,10 +1530,21 @@ class _AttachmentPane extends StatelessWidget {
             label: Text(secondaryLabel),
           ),
         ),
-        if (attachmentLabel != null) ...[
+        if (previewLabel case final label?) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onPreview,
+              icon: Icon(previewIcon),
+              label: Text(label),
+            ),
+          ),
+        ],
+        if (attachmentLabel case final label?) ...[
           const SizedBox(height: 10),
           Text(
-            attachmentLabel!,
+            label,
             style: const TextStyle(
               color: Color(0xFF24364B),
               fontWeight: FontWeight.w600,
@@ -829,78 +1556,44 @@ class _AttachmentPane extends StatelessWidget {
   );
 }
 
-class _ModeButton extends StatelessWidget {
-  const _ModeButton({
+class _SecondaryModeAction extends StatelessWidget {
+  const _SecondaryModeAction({
     required this.label,
     required this.icon,
     required this.selected,
+    required this.enabled,
     required this.onPressed,
   });
   final String label;
   final IconData icon;
   final bool selected;
+  final bool enabled;
   final VoidCallback onPressed;
-  @override
-  Widget build(BuildContext context) => OutlinedButton.icon(
-    onPressed: onPressed,
-    icon: Icon(icon, size: 14),
-    label: Text(
-      label.startsWith('Lista') ? 'Exámenes' : label,
-      maxLines: 1,
-      textAlign: TextAlign.center,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-    ),
-    style: OutlinedButton.styleFrom(
-      foregroundColor: selected ? Colors.white : const Color(0xFF18304A),
-      padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
-      minimumSize: Size.zero,
-      visualDensity: VisualDensity.compact,
-      side: BorderSide(
-        color: selected ? Colors.white : Colors.transparent,
-        width: selected ? 2 : 1,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-    ),
-  );
-}
 
-class _ModeLabel extends StatelessWidget {
-  const _ModeLabel({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.flex,
-    required this.onPressed,
-  });
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final int flex;
-  final VoidCallback onPressed;
   @override
-  Widget build(BuildContext context) => Expanded(
-    flex: flex,
-    child: OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 14),
-      label: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-      ),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: selected ? Colors.white : const Color(0xFF18304A),
-        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
-        minimumSize: Size.zero,
-        visualDensity: VisualDensity.compact,
-        side: BorderSide(
-          color: selected ? Colors.white : Colors.transparent,
-          width: selected ? 2 : 1,
+  Widget build(BuildContext context) => TextButton(
+    onPressed: enabled ? onPressed : null,
+    style: TextButton.styleFrom(
+      foregroundColor: enabled
+          ? selected
+                ? const Color(0xFF009FA4)
+                : const Color(0xFF10264C)
+          : const Color(0xFF9AA8B8),
+      backgroundColor: enabled && selected
+          ? const Color(0xFFE5F8F7)
+          : Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    ),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 32),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
         ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-      ),
+      ],
     ),
   );
 }
@@ -990,24 +1683,20 @@ class _ExamSelectorState extends State<_ExamSelector> {
             }
           },
           child: SizedBox(
-            height: 44,
+            height: 58,
             child: Row(
               children: [
                 const SizedBox(width: 12),
-                SvgPicture.asset(
-                  'assets/svg/health-checkup.svg',
-                  width: 22,
-                  height: 22,
-                  colorFilter: const ColorFilter.mode(
-                    Color(0xFF9C9C9C),
-                    BlendMode.srcIn,
-                  ),
+                const Icon(
+                  Icons.assignment_outlined,
+                  size: 27,
+                  color: Color(0xFF10264C),
                 ),
                 const SizedBox(width: 10),
                 const Expanded(
                   child: Text(
-                    'Examen',
-                    style: TextStyle(color: Color(0xFF555555)),
+                    'Selecciona un examen',
+                    style: TextStyle(color: Color(0xFF647194), fontSize: 15),
                   ),
                 ),
                 Icon(

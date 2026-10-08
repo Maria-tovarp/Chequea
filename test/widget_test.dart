@@ -1,7 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:chequea_app/features/auth/models/user_session.dart';
 import 'package:chequea_app/features/auth/services/auth_service.dart';
+import 'package:chequea_app/features/home/pages/sent_messages_page.dart';
+import 'package:chequea_app/features/home/services/referred_appointments_service.dart';
 
 void main() {
   test('acepta una respuesta de refresh token de la API', () {
@@ -51,5 +56,51 @@ void main() {
       brandingNameFromPayload({'chequea_branding_title': 'MiniMed'}),
       'MiniMed',
     );
+  });
+
+  test('lee una referencia con paciente y servicios anidados', () {
+    final appointment = ReferralAppointment.fromJson({
+      'id': 16199,
+      'patient': {'first_name': 'Kely', 'last_name': 'Daly'},
+      'clinic': {
+        'name': 'Centro Medico San Luis',
+        'address_alias': 'Via Espana',
+        'location': {'breadcrumb': 'Panama / Intermedio'},
+      },
+      'creation_date': '2024-10-17',
+      'appointment_date': '2024-10-18',
+      'appointment_status': 'ok',
+      'appointment_attendance_status': 'pending',
+      'final_price': 5486,
+      'services': {
+        'items': [
+          {'title': 'T3', 'final_price': 15},
+        ],
+      },
+    });
+
+    expect(appointment.patientName, 'Kely Daly');
+    expect(appointment.location, contains('(Via Espana)'));
+    expect(appointment.finalPrice, 5486);
+    expect(appointment.services.single.name, 'T3');
+  });
+
+  testWidgets('renderiza Mis enviados mientras carga', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: SentMessagesPage(
+          session: UserSession(
+            username: 'maria',
+            country: 'Panamá',
+            isChequeandomeAgent: false,
+            refreshToken: 'refresh',
+            accessToken: 'access',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 }

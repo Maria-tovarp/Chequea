@@ -103,14 +103,16 @@ class AuthService {
     final ownsClient = _client == null;
     final client = _client ?? http.Client();
     try {
-      final response = await client.post(
-        Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth/access'),
-        headers: {
-          'Accept': 'application/json',
-          'x-api-key': apiKey,
-          'Authorization': 'Bearer ${session.refreshToken}',
-        },
-      );
+      final response = await client
+          .post(
+            Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth/access'),
+            headers: {
+              'Accept': 'application/json',
+              'x-api-key': apiKey,
+              'Authorization': 'Bearer ${session.refreshToken}',
+            },
+          )
+          .timeout(const Duration(seconds: 30));
       final accessToken = _payload(response)['access_token']?.toString();
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||

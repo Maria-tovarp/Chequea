@@ -16,17 +16,35 @@ class ReferredAppointmentsService {
     required int page,
     String? status,
     String? attendance,
+    DateTime? creationDateStart,
+    DateTime? creationDateEnd,
+    DateTime? appointmentDateStart,
+    DateTime? appointmentDateEnd,
   }) async {
     final config = AppConfig.forCountry(session.country);
     final query = <String, String>{
       'page': '$page',
       'order': 'creation_date__desc',
     };
-    if (status?.isNotEmpty ?? false) {
-      query['appointment_status'] = status!;
+    final requestedStatus = status?.trim();
+    if (requestedStatus?.isNotEmpty ?? false) {
+      query['appointment_status'] = requestedStatus ?? '';
     }
-    if (attendance?.isNotEmpty ?? false) {
-      query['appointment_attendance_status'] = attendance!;
+    final requestedAttendance = attendance?.trim();
+    if (requestedAttendance?.isNotEmpty ?? false) {
+      query['appointment_attendance_status'] = requestedAttendance ?? '';
+    }
+    if (creationDateStart != null) {
+      query['creation_date__start'] = _apiDate(creationDateStart);
+    }
+    if (creationDateEnd != null) {
+      query['creation_date__end'] = _apiDate(creationDateEnd);
+    }
+    if (appointmentDateStart != null) {
+      query['appointment_date__start'] = _apiDate(appointmentDateStart);
+    }
+    if (appointmentDateEnd != null) {
+      query['appointment_date__end'] = _apiDate(appointmentDateEnd);
     }
     final client = _client ?? http.Client();
     try {
@@ -58,7 +76,10 @@ class ReferredAppointmentsService {
       return ReferredAppointmentsResult(
         total: _int(map['total']),
         page: _int(map['page_number'], fallback: page),
-        perPage: _int(map['total_per_page'], fallback: 50),
+        perPage: _int(
+          map['total_per_page'],
+          fallback: 50,
+        ).clamp(1, 500).toInt(),
         currencySymbol: _text(map['currency_symbol'], fallback: r'$'),
         appointments: results is List
             ? results
@@ -136,19 +157,38 @@ class ReferralAppointment {
   factory ReferralAppointment.fromJson(Map value) {
     final map = Map<String, dynamic>.from(value);
     final clinicMap = _map(map['clinic']);
+    final patientMap = _map(map['patient'] ?? map['patient_data']);
     final locationMap = _map(
       clinicMap['location'] ?? clinicMap['address'] ?? map['location'],
     );
     final patient = [
-      _text(map['patient_firstname']),
-      _text(map['patient_lastname']),
+      _firstText([
+        map['patient_firstname'],
+        patientMap['firstname'],
+        patientMap['first_name'],
+      ]),
+      _firstText([
+        map['patient_lastname'],
+        patientMap['lastname'],
+        patientMap['last_name'],
+      ]),
     ].where((item) => item.isNotEmpty).join(' ');
     final rawServices =
         map['services'] ?? map['items'] ?? map['appointment_services'];
+    final serviceMap = _map(rawServices);
+    final serviceItems = rawServices is List
+        ? rawServices
+        : serviceMap['items'] ?? serviceMap['results'] ?? const [];
     return ReferralAppointment(
       id: _text(map['id']),
-      patientName: patient,
-      clinic: _text(clinicMap['title'] ?? clinicMap['name']),
+      patientName: patient.isNotEmpty
+          ? patient
+          : _firstText([patientMap['fullname'], patientMap['full_name']]),
+      clinic: _firstText([
+        clinicMap['title'],
+        clinicMap['name'],
+        map['clinic_name'],
+      ]),
       location: _locationBreadcrumb(
         locationMap,
         addressAlias: _text(
@@ -174,9 +214,14 @@ class ReferralAppointment {
         map['appointment_attendance_status'],
         fallback: 'pending',
       ),
-      finalPrice: _number(map['total_final_price'] ?? map['total_price']),
-      services: rawServices is List
-          ? rawServices.whereType<Map>().map(ReferralService.fromJson).toList()
+      finalPrice: _number(
+        map['total_final_price'] ??
+            map['final_price'] ??
+            map['total_price'] ??
+            map['price_final'],
+      ),
+      services: serviceItems is List
+          ? serviceItems.whereType<Map>().map(ReferralService.fromJson).toList()
           : const [],
     );
   }
@@ -237,19 +282,25 @@ String _text(Object? value, {String fallback = ''}) =>
     value?.toString().trim().isNotEmpty == true
     ? value.toString().trim()
     : fallback;
+String _firstText(Iterable<Object?> values, {String fallback = ''}) {
+  for (final value in values) {
+    final text = _text(value);
+    if (text.isNotEmpty) return text;
+  }
+  return fallback;
+}
+
 int _int(Object? value, {int fallback = 0}) =>
     value is num ? value.toInt() : int.tryParse('$value') ?? fallback;
 num? _number(Object? value) => value is num ? value : num.tryParse('$value');
+String _apiDate(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
 
 String _timeFrom(Object? raw, Object? hour, Object? minute) {
   final rawValue = raw?.toString().trim() ?? '';
   final rawMatch = RegExp(r'^(\d{1,2}):(\d{2})').firstMatch(rawValue);
-  final parsedHour = rawMatch == null
-      ? int.tryParse('$hour')
-      : int.tryParse(rawMatch.group(1)!);
-  final parsedMinute = rawMatch == null
-      ? int.tryParse('$minute')
-      : int.tryParse(rawMatch.group(2)!);
+  final parsedHour = int.tryParse(rawMatch?.group(1) ?? '$hour');
+  final parsedMinute = int.tryParse(rawMatch?.group(2) ?? '$minute');
   if (parsedHour == null) return '';
   final period = parsedHour >= 12 ? 'p.m.' : 'a.m.';
   final displayHour = parsedHour % 12 == 0 ? 12 : parsedHour % 12;
@@ -258,7 +309,15 @@ String _timeFrom(Object? raw, Object? hour, Object? minute) {
 
 String _locationBreadcrumb(Map location, {String addressAlias = ''}) {
   final saved = _text(location['breadcrumb'] ?? location['full_path']);
-  if (saved.isNotEmpty) return _readableLocation(saved);
+  if (saved.isNotEmpty) {
+    final breadcrumb = _readableLocation(saved);
+    final alias = addressAlias.isNotEmpty
+        ? addressAlias
+        : _text(location['address_alias']);
+    return alias.isEmpty || breadcrumb.contains('($alias)')
+        ? breadcrumb
+        : '$breadcrumb ($alias)';
+  }
   final parts = <String>[];
   void add(Object? item) {
     if (item is List) {
@@ -334,13 +393,21 @@ class ReferredAppointmentsCache {
     required int page,
     String? status,
     String? attendance,
+    DateTime? creationDateStart,
+    DateTime? creationDateEnd,
+    DateTime? appointmentDateStart,
+    DateTime? appointmentDateEnd,
   }) =>
-      'referred_appointments.${session.country}.${session.username}.$page.${status ?? ''}.${attendance ?? ''}';
+      'referred_appointments.${session.country}.${session.username}.$page.${status ?? ''}.${attendance ?? ''}.${creationDateStart?.toIso8601String() ?? ''}.${creationDateEnd?.toIso8601String() ?? ''}.${appointmentDateStart?.toIso8601String() ?? ''}.${appointmentDateEnd?.toIso8601String() ?? ''}';
   static Future<ReferredAppointmentsResult?> load({
     required UserSession session,
     required int page,
     String? status,
     String? attendance,
+    DateTime? creationDateStart,
+    DateTime? creationDateEnd,
+    DateTime? appointmentDateStart,
+    DateTime? appointmentDateEnd,
   }) async {
     final preferences = await SharedPreferences.getInstance();
     final raw = preferences.getString(
@@ -349,6 +416,10 @@ class ReferredAppointmentsCache {
         page: page,
         status: status,
         attendance: attendance,
+        creationDateStart: creationDateStart,
+        creationDateEnd: creationDateEnd,
+        appointmentDateStart: appointmentDateStart,
+        appointmentDateEnd: appointmentDateEnd,
       ),
     );
     if (raw == null) return null;
@@ -367,6 +438,10 @@ class ReferredAppointmentsCache {
     required int page,
     String? status,
     String? attendance,
+    DateTime? creationDateStart,
+    DateTime? creationDateEnd,
+    DateTime? appointmentDateStart,
+    DateTime? appointmentDateEnd,
     required ReferredAppointmentsResult result,
   }) async {
     final preferences = await SharedPreferences.getInstance();
@@ -376,6 +451,10 @@ class ReferredAppointmentsCache {
         page: page,
         status: status,
         attendance: attendance,
+        creationDateStart: creationDateStart,
+        creationDateEnd: creationDateEnd,
+        appointmentDateStart: appointmentDateStart,
+        appointmentDateEnd: appointmentDateEnd,
       ),
       jsonEncode(result.toJson()),
     );

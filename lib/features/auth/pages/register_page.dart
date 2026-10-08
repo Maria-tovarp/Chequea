@@ -138,28 +138,23 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF47D1B6),
+    backgroundColor: const Color(0xFFF0FAFF),
     body: SafeArea(
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 405),
+          constraints: const BoxConstraints(maxWidth: 440),
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
+            padding: const EdgeInsets.fromLTRB(28, 24, 28, 32),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Center(
-                  child: Image.asset(
-                    'assets/images/logo-prod-chequea.png',
-                    width: 300,
-                  ),
-                ),
+                Center(child: const _RegisterBrand()),
                 const SizedBox(height: 4),
                 Center(
                   child: Text(
                     '${_countryOption.flag}  ${_countryOption.name}',
                     style: const TextStyle(
-                      color: Colors.white,
+                      color: Color(0xFF009FA4),
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -182,7 +177,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   padding: EdgeInsets.only(top: 4),
                   child: Text(
                     'Utilice sólo letras minúsculas, dígitos, guión y/o guión bajo. Longitud requerida entre 3 y 50 caracteres.',
-                    style: TextStyle(color: Colors.white, fontSize: 14),
+                    style: TextStyle(color: Color(0xFF647194), fontSize: 14),
                   ),
                 ),
                 const SizedBox(height: 22),
@@ -234,12 +229,12 @@ class _RegisterPageState extends State<RegisterPage> {
                       setState(() => _isDoctor = value ?? false),
                   title: const Text(
                     'Sí, soy doctor',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(color: Color(0xFF24364B)),
                   ),
                   contentPadding: EdgeInsets.zero,
                   controlAffinity: ListTileControlAffinity.leading,
-                  activeColor: Colors.white,
-                  checkColor: const Color(0xFF47D1B6),
+                  activeColor: const Color(0xFF009FA4),
+                  checkColor: Colors.white,
                 ),
                 const SizedBox(height: 14),
                 _label('Correo electrónico'),
@@ -276,8 +271,8 @@ class _RegisterPageState extends State<RegisterPage> {
                         value: _acceptsTerms,
                         onChanged: (value) =>
                             setState(() => _acceptsTerms = value ?? false),
-                        activeColor: Colors.white,
-                        checkColor: const Color(0xFF47D1B6),
+                        activeColor: const Color(0xFF009FA4),
+                        checkColor: Colors.white,
                       ),
                       Expanded(
                         child: TextButton(
@@ -291,9 +286,9 @@ class _RegisterPageState extends State<RegisterPage> {
                           child: const Text(
                             'Acepto los términos y condiciones',
                             style: TextStyle(
-                              color: Colors.white,
+                              color: Color(0xFF009FA4),
                               decoration: TextDecoration.underline,
-                              decorationColor: Colors.white,
+                              decorationColor: Color(0xFF009FA4),
                             ),
                           ),
                         ),
@@ -322,8 +317,7 @@ class _RegisterPageState extends State<RegisterPage> {
                         : const Icon(Icons.check_circle),
                     label: const Text('CREAR CUENTA'),
                     style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF24364B),
-                      side: const BorderSide(color: Colors.white, width: 2),
+                      backgroundColor: const Color(0xFF009FA4),
                     ),
                   ),
                 ),
@@ -333,9 +327,9 @@ class _RegisterPageState extends State<RegisterPage> {
                     child: const Text(
                       'Iniciar sesión',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: Color(0xFF009FA4),
                         decoration: TextDecoration.underline,
-                        decorationColor: Colors.white,
+                        decorationColor: Color(0xFF009FA4),
                       ),
                     ),
                   ),
@@ -348,8 +342,14 @@ class _RegisterPageState extends State<RegisterPage> {
     ),
   );
 
-  Widget _label(String value) =>
-      Text(value, style: const TextStyle(color: Colors.white, fontSize: 17));
+  Widget _label(String value) => Text(
+    value,
+    style: const TextStyle(
+      color: Color(0xFF10264C),
+      fontSize: 16,
+      fontWeight: FontWeight.w700,
+    ),
+  );
 
   CountryOption get _countryOption => AppConfig.countries.firstWhere(
     (country) => country.name == widget.country,
@@ -359,6 +359,43 @@ class _RegisterPageState extends State<RegisterPage> {
       _submitted && _passwordRepeat.text != _password.text
       ? 'Las contraseñas no coinciden.'
       : _required(_passwordRepeat.text);
+}
+
+class _RegisterBrand extends StatelessWidget {
+  const _RegisterBrand();
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Container(
+        width: 58,
+        height: 58,
+        decoration: const BoxDecoration(
+          color: Color(0xFFE5F8F7),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(
+          Icons.monitor_heart_rounded,
+          color: Color(0xFF009FA4),
+          size: 34,
+        ),
+      ),
+      const SizedBox(height: 8),
+      const Text(
+        'Crea tu cuenta',
+        style: TextStyle(
+          color: Color(0xFF10264C),
+          fontSize: 25,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      const SizedBox(height: 3),
+      const Text(
+        'Completa tus datos para comenzar',
+        style: TextStyle(color: Color(0xFF647194), fontSize: 13),
+      ),
+    ],
+  );
 }
 
 class _ValidationError extends StatelessWidget {
@@ -392,7 +429,7 @@ class _ValidationError extends StatelessWidget {
           child: Text(
             message,
             style: const TextStyle(
-              color: Colors.white,
+              color: Color(0xFFE83D5A),
               fontSize: 14,
               fontWeight: FontWeight.w600,
             ),

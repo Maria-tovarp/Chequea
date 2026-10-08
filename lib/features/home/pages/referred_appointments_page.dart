@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../core/navigation/app_page_route.dart';
 import '../../auth/models/user_session.dart';
+import '../../auth/pages/login_page.dart';
 import '../../auth/services/auth_service.dart';
 import '../../auth/services/session_store.dart';
+import 'sent_messages_page.dart';
 import '../services/referred_appointments_service.dart';
 
 class ReferredAppointmentsPage extends StatefulWidget {
@@ -16,18 +21,30 @@ class ReferredAppointmentsPage extends StatefulWidget {
 
 class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
   final _service = const ReferredAppointmentsService();
+  final _scrollController = ScrollController();
   late UserSession _session;
   String? _status;
   String? _attendance;
+  DateTime? _creationDateStart;
+  DateTime? _creationDateEnd;
+  DateTime? _appointmentDateStart;
+  DateTime? _appointmentDateEnd;
   ReferredAppointmentsResult? _data;
   ReferredAppointmentsResult? _sourceData;
   bool _loading = true;
   String? _error;
   bool _filtersOpen = false;
   bool _filtering = false;
+  bool _sessionExpired = false;
   int _loadRequestId = 0;
 
-  bool get _hasActiveFilters => _status != null || _attendance != null;
+  bool get _hasActiveFilters =>
+      _status != null ||
+      _attendance != null ||
+      _creationDateStart != null ||
+      _creationDateEnd != null ||
+      _appointmentDateStart != null ||
+      _appointmentDateEnd != null;
   bool get _attendanceIsRestricted =>
       _status == 'cancel' || _status == 'pending' || _status == 'rescheduling';
 
@@ -38,13 +55,33 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
     _restoreCacheAndRefresh();
   }
 
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToTop() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+      }
+    });
+  }
+
   Future<void> _load({int page = 1, bool announceFiltering = false}) async {
+    final currentData = _data;
+    final changesPage = currentData != null && currentData.page != page;
+    if (changesPage) {
+      _scrollToTop();
+    }
     final requestId = ++_loadRequestId;
     setState(() {
       _loading = true;
       _error = null;
       _filtering = announceFiltering;
-      if (_sourceData != null) _data = _applyLocalFilters(_sourceData!);
+      final sourceData = _sourceData;
+      if (sourceData != null) _data = _applyLocalFilters(sourceData);
     });
     try {
       final cached = await ReferredAppointmentsCache.load(
@@ -52,6 +89,10 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         page: page,
         status: _status,
         attendance: _attendance,
+        creationDateStart: _creationDateStart,
+        creationDateEnd: _creationDateEnd,
+        appointmentDateStart: _appointmentDateStart,
+        appointmentDateEnd: _appointmentDateEnd,
       );
       if (mounted && cached != null && requestId == _loadRequestId) {
         setState(() {
@@ -59,6 +100,7 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
           _data = _applyLocalFilters(cached);
           _loading = false;
         });
+        _scrollToTop();
       }
       final data = await _fetch(page);
       await ReferredAppointmentsCache.save(
@@ -66,6 +108,10 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         page: page,
         status: _status,
         attendance: _attendance,
+        creationDateStart: _creationDateStart,
+        creationDateEnd: _creationDateEnd,
+        appointmentDateStart: _appointmentDateStart,
+        appointmentDateEnd: _appointmentDateEnd,
         result: data,
       );
       if (mounted && requestId == _loadRequestId) {
@@ -74,6 +120,7 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
           _data = _applyLocalFilters(data);
         });
         _filtering = false;
+        _scrollToTop();
       }
     } on ReferredAppointmentsException {
       if (mounted && requestId == _loadRequestId) {
@@ -105,6 +152,10 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
       page: 1,
       status: _status,
       attendance: _attendance,
+      creationDateStart: _creationDateStart,
+      creationDateEnd: _creationDateEnd,
+      appointmentDateStart: _appointmentDateStart,
+      appointmentDateEnd: _appointmentDateEnd,
     );
     if (!mounted) return;
     if (cached != null) {
@@ -125,6 +176,20 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
       if (_attendance != null && appointment.attendance != _attendance) {
         return false;
       }
+      if (!_isWithinDates(
+        appointment.creationDate,
+        _creationDateStart,
+        _creationDateEnd,
+      )) {
+        return false;
+      }
+      if (!_isWithinDates(
+        appointment.appointmentDate,
+        _appointmentDateStart,
+        _appointmentDateEnd,
+      )) {
+        return false;
+      }
       return true;
     }).toList();
     return ReferredAppointmentsResult(
@@ -136,6 +201,21 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
     );
   }
 
+  bool _isWithinDates(String value, DateTime? start, DateTime? end) {
+    if (start == null && end == null) return true;
+    final date = DateTime.tryParse(value);
+    if (date == null) return false;
+    final day = DateTime(date.year, date.month, date.day);
+    if (start != null &&
+        day.isBefore(DateTime(start.year, start.month, start.day))) {
+      return false;
+    }
+    if (end != null && day.isAfter(DateTime(end.year, end.month, end.day))) {
+      return false;
+    }
+    return true;
+  }
+
   Future<ReferredAppointmentsResult> _fetch(int page) async {
     try {
       return await _service.fetch(
@@ -143,10 +223,18 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         page: page,
         status: _status,
         attendance: _attendance,
+        creationDateStart: _creationDateStart,
+        creationDateEnd: _creationDateEnd,
+        appointmentDateStart: _appointmentDateStart,
+        appointmentDateEnd: _appointmentDateEnd,
       );
     } on ReferredAppointmentsException {
       final refreshed = await const AuthService().refreshSession(_session);
-      if (refreshed == null) rethrow;
+      if (refreshed == null) {
+        await SessionStore.clear();
+        if (mounted) setState(() => _sessionExpired = true);
+        rethrow;
+      }
       _session = refreshed;
       await SessionStore.save(refreshed);
       return _service.fetch(
@@ -154,17 +242,68 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         page: page,
         status: _status,
         attendance: _attendance,
+        creationDateStart: _creationDateStart,
+        creationDateEnd: _creationDateEnd,
+        appointmentDateStart: _appointmentDateStart,
+        appointmentDateEnd: _appointmentDateEnd,
       );
     }
+  }
+
+  void _goToLogin() {
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (route) => false,
+    );
   }
 
   void _clear() {
     setState(() {
       _status = null;
       _attendance = null;
+      _creationDateStart = null;
+      _creationDateEnd = null;
+      _appointmentDateStart = null;
+      _appointmentDateEnd = null;
     });
     _load(announceFiltering: true);
   }
+
+  Future<void> _pickDate({
+    required bool appointmentDate,
+    required bool isEnd,
+  }) async {
+    final current = appointmentDate
+        ? (isEnd ? _appointmentDateEnd : _appointmentDateStart)
+        : (isEnd ? _creationDateEnd : _creationDateStart);
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: current ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      if (appointmentDate) {
+        if (isEnd) {
+          _appointmentDateEnd = selected;
+        } else {
+          _appointmentDateStart = selected;
+        }
+      } else {
+        if (isEnd) {
+          _creationDateEnd = selected;
+        } else {
+          _creationDateStart = selected;
+        }
+      }
+    });
+  }
+
+  String _date(DateTime? value) => value == null
+      ? ''
+      : '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
 
   void _goBack() {
     final navigator = Navigator.of(context);
@@ -178,17 +317,22 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
       if (!didPop) _goBack();
     },
     child: Scaffold(
-      backgroundColor: const Color(0xFF47D1B6),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF47D1B6),
-        foregroundColor: const Color(0xFF24364B),
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF10264C),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leadingWidth: 36,
+        titleSpacing: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: _goBack,
         ),
+        centerTitle: true,
         title: const Text(
           'Mis referencias',
-          style: TextStyle(fontWeight: FontWeight.w600),
+          style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
         ),
       ),
       body: SafeArea(
@@ -201,15 +345,16 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
           ],
         ),
       ),
+      bottomNavigationBar: _ReferencesBottomMenu(session: _session),
     ),
   );
 
   Widget _filterPanel() => Container(
-    margin: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+    margin: const EdgeInsets.fromLTRB(16, 4, 16, 10),
     decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: .18),
+      color: const Color(0xFFF8FAFE),
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: Colors.white70),
+      border: Border.all(color: const Color(0xFFE4EAF4)),
     ),
     child: Column(
       children: [
@@ -275,10 +420,10 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
                   children: [
                     Expanded(
                       child: _FilterDropdown(
-                        label: 'Estado',
+                        label: 'Estado de cita',
                         value: _status,
                         items: const {
-                          'pending': 'En espera',
+                          'pending': 'En Espera',
                           'ok': 'Confirmada',
                           'cancel': 'Cancelada',
                           'rescheduling': 'Reprogramando',
@@ -292,17 +437,63 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: _FilterDropdown(
-                        label: 'Asistencia',
+                        label: 'Estado de asistencia',
                         value: _attendance,
                         items: _attendanceIsRestricted
                             ? const {}
                             : const {
-                                'pending': 'En espera',
-                                'yes': 'Sí asistió',
-                                'no': 'No asistió',
+                                'pending': 'En Espera',
+                                'yes': 'Sí Asistió',
+                                'no': 'No Asistió',
                               },
-                        onChanged: (value) =>
-                            setState(() => _attendance = value),
+                        onChanged: (value) => setState(() {
+                          _attendance = value;
+                          if (value != null) _status = 'ok';
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ReferenceDateField(
+                        label: 'Fecha entrada DESDE',
+                        value: _date(_creationDateStart),
+                        onTap: () =>
+                            _pickDate(appointmentDate: false, isEnd: false),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _ReferenceDateField(
+                        label: 'Fecha entrada HASTA',
+                        value: _date(_creationDateEnd),
+                        onTap: () =>
+                            _pickDate(appointmentDate: false, isEnd: true),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ReferenceDateField(
+                        label: 'Fecha cita DESDE',
+                        value: _date(_appointmentDateStart),
+                        onTap: () =>
+                            _pickDate(appointmentDate: true, isEnd: false),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _ReferenceDateField(
+                        label: 'Fecha cita HASTA',
+                        value: _date(_appointmentDateEnd),
+                        onTap: () =>
+                            _pickDate(appointmentDate: true, isEnd: true),
                       ),
                     ),
                   ],
@@ -322,7 +513,7 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
                         label: const Text('Filtrar'),
                         style: const ButtonStyle(
                           backgroundColor: WidgetStatePropertyAll(
-                            Color(0xFF24364B),
+                            Color(0xFF009FA4),
                           ),
                           foregroundColor: WidgetStatePropertyAll(Colors.white),
                         ),
@@ -344,9 +535,12 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
   );
 
   Widget _body() {
+    if (_sessionExpired) return _sessionExpiredState();
     if (_filtering) return _filteringState();
     if (_loading && _data == null) {
-      return _emptyState();
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF009FA4)),
+      );
     }
     if (_error != null && _data == null) {
       return _errorState();
@@ -359,7 +553,8 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
       children: [
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            controller: _scrollController,
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
             itemCount: data.appointments.length,
             itemBuilder: (_, index) => _AppointmentCard(
               appointment: data.appointments[index],
@@ -372,32 +567,74 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
     );
   }
 
-  Widget _pagination(ReferredAppointmentsResult data) => Container(
-    color: const Color(0xFF24364B),
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-    child: Row(
-      children: [
-        Expanded(
-          child: Text(
-            _paginationLabel(
-              page: data.page,
-              perPage: data.perPage,
-              visible: data.appointments.length,
-              total: data.total,
-            ),
-            style: const TextStyle(color: Colors.white, fontSize: 12),
+  Widget _sessionExpiredState() => Center(
+    child: Container(
+      margin: const EdgeInsets.all(28),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.lock_clock_outlined, color: Color(0xFF24364B)),
+          const SizedBox(height: 12),
+          const Text(
+            'Tu sesión expiró. Inicia sesión nuevamente para ver las referencias.',
+            textAlign: TextAlign.center,
           ),
+          const SizedBox(height: 14),
+          FilledButton(
+            onPressed: _goToLogin,
+            child: const Text('Iniciar sesión'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _pagination(ReferredAppointmentsResult data) => Container(
+    color: Colors.white,
+    child: SafeArea(
+      top: false,
+      child: Container(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: Color(0xFFE4EAF4))),
         ),
-        IconButton(
-          onPressed: data.page > 1 ? () => _load(page: data.page - 1) : null,
-          icon: const Icon(Icons.chevron_left, color: Colors.white),
+        padding: const EdgeInsets.fromLTRB(20, 5, 12, 5),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _paginationLabel(
+                  page: data.page,
+                  perPage: data.perPage,
+                  visible: data.appointments.length,
+                  total: data.total,
+                ),
+                style: const TextStyle(fontSize: 15, color: Color(0xFF647194)),
+              ),
+            ),
+            IconButton(
+              onPressed: data.page > 1 && !_loading
+                  ? () => _load(page: data.page - 1)
+                  : null,
+              icon: const Icon(Icons.chevron_left, color: Color(0xFF10264C)),
+            ),
+            Text(
+              '${data.page}',
+              style: const TextStyle(color: Color(0xFF10264C)),
+            ),
+            IconButton(
+              onPressed: data.hasNext && !_loading
+                  ? () => _load(page: data.page + 1)
+                  : null,
+              icon: const Icon(Icons.chevron_right, color: Color(0xFF10264C)),
+            ),
+          ],
         ),
-        Text('${data.page}', style: const TextStyle(color: Colors.white)),
-        IconButton(
-          onPressed: data.hasNext ? () => _load(page: data.page + 1) : null,
-          icon: const Icon(Icons.chevron_right, color: Colors.white),
-        ),
-      ],
+      ),
     ),
   );
 
@@ -407,10 +644,10 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
     required int visible,
     required int total,
   }) {
-    if (visible == 0) return 'Mostrando 0 de $total';
+    if (visible == 0) return 'Mostrando 0 de $total referencias';
     final first = ((page - 1) * perPage) + 1;
     final last = first + visible - 1;
-    return 'Mostrando $first–$last de $total';
+    return 'Mostrando $first–$last de $total referencias';
   }
 
   Widget _emptyState() => Center(
@@ -428,18 +665,12 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
           Icon(Icons.event_busy_outlined, size: 38, color: Color(0xFF24364B)),
           SizedBox(height: 12),
           Text(
-            'Aún no tienes referencias registradas.',
+            'No se encontraron referencias en la base de datos de citas médicas.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Color(0xFF24364B),
               fontWeight: FontWeight.w700,
             ),
-          ),
-          SizedBox(height: 6),
-          Text(
-            'Cuando un paciente genere una cita desde tu referencia, aparecerá aquí.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFF53645F), height: 1.3),
           ),
         ],
       ),
@@ -450,7 +681,7 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        CircularProgressIndicator(color: Colors.white),
+        CircularProgressIndicator(color: Color(0xFF009FA4)),
         SizedBox(height: 14),
         Text(
           'Aplicando filtros...',
@@ -511,6 +742,64 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
   );
 }
 
+class _ReferenceDateField extends StatelessWidget {
+  const _ReferenceDateField({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFF24364B),
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 5),
+      Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            height: 48,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.calendar_today, size: 19),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      value.isEmpty ? 'Seleccionar' : value,
+                      maxLines: 2,
+                      softWrap: true,
+                      style: TextStyle(
+                        color: value.isEmpty
+                            ? const Color(0xFF667772)
+                            : const Color(0xFF1A1A1A),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
 class _FilterDropdown extends StatelessWidget {
   const _FilterDropdown({
     required this.label,
@@ -544,13 +833,34 @@ class _FilterDropdown extends StatelessWidget {
           child: DropdownButton<String>(
             isExpanded: true,
             value: value,
-            hint: const Text('Todos'),
+            style: const TextStyle(
+              color: Color(0xFF24364B),
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+            ),
+            hint: const Text(
+              'Todos',
+              style: TextStyle(
+                color: Color(0xFF24364B),
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
             items: [
-              const DropdownMenuItem<String>(value: null, child: Text('Todos')),
+              const DropdownMenuItem<String>(
+                value: null,
+                child: Text(
+                  'Todos',
+                  style: TextStyle(fontWeight: FontWeight.w400),
+                ),
+              ),
               ...items.entries.map(
                 (entry) => DropdownMenuItem(
                   value: entry.key,
-                  child: Text(entry.value),
+                  child: Text(
+                    entry.value,
+                    style: const TextStyle(fontWeight: FontWeight.w400),
+                  ),
                 ),
               ),
             ],
@@ -562,6 +872,7 @@ class _FilterDropdown extends StatelessWidget {
   );
 }
 
+@pragma('vm:entry-point')
 class _AppointmentCardOld extends StatelessWidget {
   const _AppointmentCardOld({required this.appointment});
   final ReferralAppointment appointment;
@@ -594,9 +905,9 @@ String _statusLabel(String value) => switch (value) {
   _ => 'En espera',
 };
 String _attendanceLabel(String value) => switch (value) {
-  'yes' => 'Asistió',
-  'no' => 'No asistió',
-  _ => 'Asistencia pendiente',
+  'yes' => 'Sí Asistió',
+  'no' => 'No Asistió',
+  _ => 'En Espera',
 };
 
 class _AppointmentCard extends StatefulWidget {
@@ -613,6 +924,39 @@ class _AppointmentCard extends StatefulWidget {
 class _AppointmentCardState extends State<_AppointmentCard> {
   bool _expanded = false;
   ReferralAppointment get appointment => widget.appointment;
+
+  String get _displayStatus {
+    return switch (appointment.attendance) {
+      'yes' => 'Asistió',
+      'no' => 'No asistió',
+      _ => switch (appointment.status) {
+        'cancel' => 'Cancelado',
+        'ok' => 'Confirmada',
+        'rescheduling' => 'Reprogramando',
+        _ => 'Pendiente',
+      },
+    };
+  }
+
+  Color get _statusColor => switch (appointment.attendance) {
+    'yes' => const Color(0xFF07843F),
+    'no' => const Color(0xFFE22D2D),
+    _ => switch (appointment.status) {
+      'cancel' => const Color(0xFFA86600),
+      'ok' => const Color(0xFF07843F),
+      _ => const Color(0xFF1B65D8),
+    },
+  };
+
+  Color get _statusBackground => switch (appointment.attendance) {
+    'yes' => const Color(0xFFE0F6E8),
+    'no' => const Color(0xFFFFE7E7),
+    _ => switch (appointment.status) {
+      'cancel' => const Color(0xFFFFF2D9),
+      'ok' => const Color(0xFFE0F6E8),
+      _ => const Color(0xFFE7EFFF),
+    },
+  };
   String _date(String value) {
     final date = DateTime.tryParse(value);
     if (date == null) return value.isEmpty ? 'No disponible' : value;
@@ -642,69 +986,102 @@ class _AppointmentCardState extends State<_AppointmentCard> {
     margin: const EdgeInsets.only(bottom: 10),
     elevation: 0,
     shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(14),
-      side: const BorderSide(color: Color(0xFFB9E9DF)),
+      borderRadius: BorderRadius.circular(20),
+      side: const BorderSide(color: Color(0xFFE4EAF4)),
     ),
     child: InkWell(
       onTap: () => setState(() => _expanded = !_expanded),
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(20),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(18, 18, 14, 18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const CircleAvatar(
-                  backgroundColor: Color(0xFFD2F1FB),
-                  foregroundColor: Color(0xFF24364B),
-                  child: Icon(Icons.medical_information_outlined),
+                CircleAvatar(
+                  radius: 31,
+                  backgroundColor: _statusBackground,
+                  foregroundColor: _statusColor,
+                  child: const Icon(Icons.person_rounded, size: 40),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 7),
                 Expanded(
                   child: Text(
                     appointment.patientName.isEmpty
                         ? 'Paciente'
                         : appointment.patientName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.left,
                     style: const TextStyle(
-                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF10264C),
+                      fontWeight: FontWeight.w800,
                       fontSize: 16,
                     ),
                   ),
                 ),
-                Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
-                  color: const Color(0xFF24364B),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _statusBackground,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Text(
+                    _displayStatus,
+                    style: TextStyle(
+                      color: _statusColor,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 18,
+                  color: Color(0xFF647194),
                 ),
               ],
             ),
             const SizedBox(height: 9),
+            if (_expanded && appointment.id.isNotEmpty)
+              Text(
+                'Reserva #${appointment.id}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             _InfoLine(label: 'Clínica', value: appointment.clinic),
-            _InfoLine(label: 'Entrada', value: _date(appointment.creationDate)),
-            _InfoLine(label: 'Cita', value: _date(appointment.appointmentDate)),
-            Text(
-              '${_statusLabel(appointment.status)} · ${_attendanceLabel(appointment.attendance)}',
-              style: const TextStyle(color: Color(0xFF53645F)),
+            if (_expanded && appointment.location.isNotEmpty)
+              _InfoLine(
+                label: 'Ubicación',
+                value: appointment.location,
+                icon: Icons.location_on_outlined,
+              ),
+            _InfoLine(
+              label: 'Fecha entrada',
+              value: _date(appointment.creationDate),
             ),
+            _InfoLine(
+              label: 'Fecha cita',
+              value: _date(appointment.appointmentDate),
+            ),
+            if (_expanded)
+              Text(
+                '${_statusLabel(appointment.status)} · ${_attendanceLabel(appointment.attendance)}',
+                style: const TextStyle(color: Color(0xFF53645F)),
+              ),
             if (_expanded) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 11),
                 child: Divider(height: 1, color: Color(0xFFE1ECE9)),
               ),
-              if (appointment.id.isNotEmpty)
-                _InfoLine(label: 'Reserva', value: '#${appointment.id}'),
-              if (appointment.location.isNotEmpty)
-                _InfoLine(
-                  label: 'Ubicación',
-                  value: appointment.location,
-                  icon: Icons.location_on_outlined,
-                ),
-              if (appointment.finalPrice != null)
+              if (appointment.finalPrice case final price?)
                 _InfoLine(
                   label: 'Precio final',
-                  value:
-                      '${widget.currencySymbol}${_money(appointment.finalPrice!)}',
+                  value: '${widget.currencySymbol}${_money(price)}',
                   bold: true,
                 ),
               if (appointment.services.isNotEmpty) ...[
@@ -720,11 +1097,11 @@ class _AppointmentCardState extends State<_AppointmentCard> {
                 ...appointment.services.map(
                   (service) => Padding(
                     padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      service.price == null
-                          ? service.name
-                          : '${service.name}  →  ${widget.currencySymbol}${_money(service.price!)}',
-                    ),
+                    child: Text(switch (service.price) {
+                      final price? =>
+                        '${service.name}  →  ${widget.currencySymbol}${_money(price)}',
+                      null => service.name,
+                    }),
                   ),
                 ),
               ],
@@ -785,4 +1162,143 @@ class _InfoLine extends StatelessWidget {
       ],
     ),
   );
+}
+
+class _ReferencesBottomMenu extends StatelessWidget {
+  const _ReferencesBottomMenu({required this.session});
+
+  final UserSession session;
+
+  Future<void> _copyInviteLink(BuildContext context) async {
+    final link = session.inviteLink?.trim() ?? '';
+    final message = link.isEmpty
+        ? 'No hay un enlace de invitación disponible.'
+        : 'El enlace de invitación está listo para compartir.';
+    if (link.isNotEmpty) await Clipboard.setData(ClipboardData(text: link));
+    if (!context.mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          link.isEmpty ? 'Invitación no disponible' : 'Enlace copiado',
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    child: Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFD5DEF0))),
+      ),
+      padding: const EdgeInsets.fromLTRB(4, 9, 4, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ReferencesMenuItem(
+              label: 'Enviar\nmensaje',
+              asset: 'assets/svg/health-checkup.svg',
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          const _ReferencesMenuDivider(),
+          Expanded(
+            child: _ReferencesMenuItem(
+              label: 'Mis enviados',
+              asset: 'assets/svg/Icono de enviados - líneas celeste.svg',
+              onPressed: () => Navigator.of(context).pushReplacement(
+                appPageRoute(SentMessagesPage(session: session)),
+              ),
+            ),
+          ),
+          const _ReferencesMenuDivider(),
+          Expanded(
+            child: _ReferencesMenuItem(
+              label: 'Mis referencias',
+              asset: 'assets/svg/Icono de referencias - líneas celestes.svg',
+              selected: true,
+              onPressed: () {},
+            ),
+          ),
+          const _ReferencesMenuDivider(),
+          Expanded(
+            child: _ReferencesMenuItem(
+              label: 'Invitar a un amigo',
+              asset: 'assets/svg/Icono de invitar amigo - celeste.svg',
+              onPressed: () => _copyInviteLink(context),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _ReferencesMenuDivider extends StatelessWidget {
+  const _ReferencesMenuDivider();
+
+  @override
+  Widget build(BuildContext context) => const SizedBox(
+    height: 42,
+    child: VerticalDivider(color: Color(0xFFD5DEF0)),
+  );
+}
+
+class _ReferencesMenuItem extends StatelessWidget {
+  const _ReferencesMenuItem({
+    required this.label,
+    required this.asset,
+    this.selected = false,
+    this.onPressed,
+  });
+
+  final String label;
+  final String asset;
+  final bool selected;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? const Color(0xFF009FA4) : const Color(0xFF10264C);
+    return TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: color,
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SvgPicture.asset(
+            asset,
+            width: 29,
+            height: 29,
+            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

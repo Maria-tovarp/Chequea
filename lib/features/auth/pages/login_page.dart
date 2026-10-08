@@ -43,11 +43,13 @@ class _LoginPageState extends State<LoginPage> {
     if (!mounted) return;
     setState(() => _loading = false);
     if (result.isBrandingBlocked) {
+      final brandingName = result.brandingName;
+      if (brandingName == null) return;
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
         builder: (dialogContext) => _BrandingAccessDialog(
-          brandingName: result.brandingName!,
+          brandingName: brandingName,
           onDismissed: () => Navigator.of(dialogContext).pop(),
         ),
       );
@@ -58,28 +60,32 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     if (!result.isSuccess) {
+      final errorMessage =
+          result.errorMessage ?? 'No fue posible iniciar sesiÃ³n.';
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(result.errorMessage!)));
+      ).showSnackBar(SnackBar(content: Text(errorMessage)));
       return;
     }
-    await SessionStore.save(result.session!);
+    final session = result.session;
+    if (session == null) return;
+    await SessionStore.save(session);
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => HomePage(session: result.session!)),
+      MaterialPageRoute(builder: (_) => HomePage(session: session)),
     );
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF47D1B6),
+    backgroundColor: const Color(0xFFF0FAFF),
     body: SizedBox.expand(
       child: Container(
-        color: const Color(0xFF47D1B6),
+        color: Colors.transparent,
         padding: const EdgeInsets.symmetric(horizontal: 24),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 405),
+            constraints: const BoxConstraints(maxWidth: 440),
             child: SizedBox.expand(
               child: SafeArea(
                 child: LayoutBuilder(
@@ -91,28 +97,30 @@ class _LoginPageState extends State<LoginPage> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Image.asset(
-                            'assets/images/logo-prod-chequea.png',
-                            width: 350,
-                          ),
-                          const SizedBox(height: 10),
+                          const _AuthBrand(),
+                          const SizedBox(height: 22),
                           _CountryPicker(
                             country: _country,
                             onChanged: (value) =>
                                 setState(() => _country = value),
                           ),
-                          const SizedBox(height: 54),
+                          const SizedBox(height: 34),
                           TextField(
                             controller: _username,
                             style: const TextStyle(color: Color(0xFF1A1A1A)),
                             decoration: InputDecoration(
                               hintText: 'Usuario',
                               prefixIcon: const Icon(Icons.person),
+                              suffixIconConstraints:
+                                  const BoxConstraints.tightFor(
+                                    width: 52,
+                                    height: 52,
+                                  ),
                               error: _submitted && _username.text.trim().isEmpty
                                   ? const _ValidationError()
                                   : null,
                               suffixIcon: _FieldAction(
-                                color: const Color(0xFFE83D5A),
+                                color: const Color(0xFF10264C),
                                 icon: const Icon(
                                   Icons.close,
                                   color: Colors.white,
@@ -129,11 +137,16 @@ class _LoginPageState extends State<LoginPage> {
                             decoration: InputDecoration(
                               hintText: 'Contraseña',
                               prefixIcon: const Icon(Icons.lock),
+                              suffixIconConstraints:
+                                  const BoxConstraints.tightFor(
+                                    width: 52,
+                                    height: 52,
+                                  ),
                               error: _submitted && _password.text.trim().isEmpty
                                   ? const _ValidationError()
                                   : null,
                               suffixIcon: _FieldAction(
-                                color: const Color(0xFF11C5E8),
+                                color: const Color(0xFF009FA4),
                                 onPressed: () => setState(
                                   () => _showPassword = !_showPassword,
                                 ),
@@ -146,7 +159,7 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 36),
+                          const SizedBox(height: 30),
                           SizedBox(
                             width: double.infinity,
                             height: 46,
@@ -163,22 +176,15 @@ class _LoginPageState extends State<LoginPage> {
                                     )
                                   : const Icon(Icons.login),
                               label: const Text('ENTRAR'),
-                              style: ButtonStyle(
-                                foregroundColor: const WidgetStatePropertyAll(
-                                  Colors.white,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                backgroundColor: const Color(0xFF009FA4),
+                                side: const BorderSide(
+                                  color: Color(0xFF009FA4),
                                 ),
-                                side: const WidgetStatePropertyAll(
-                                  BorderSide(color: Colors.white, width: 2),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                                backgroundColor:
-                                    WidgetStateProperty.resolveWith((states) {
-                                      return _loading ||
-                                              states.contains(
-                                                WidgetState.pressed,
-                                              )
-                                          ? const Color(0xFF1097E0)
-                                          : Colors.transparent;
-                                    }),
                               ),
                             ),
                           ),
@@ -191,10 +197,10 @@ class _LoginPageState extends State<LoginPage> {
                             child: const Text(
                               'Regístrate aquí',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: Color(0xFF009FA4),
                                 fontSize: 15,
                                 decoration: TextDecoration.underline,
-                                decorationColor: Colors.white,
+                                decorationColor: Color(0xFF009FA4),
                               ),
                             ),
                           ),
@@ -212,6 +218,44 @@ class _LoginPageState extends State<LoginPage> {
   );
 }
 
+class _AuthBrand extends StatelessWidget {
+  const _AuthBrand();
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Container(
+        width: 62,
+        height: 62,
+        decoration: const BoxDecoration(
+          color: Color(0xFFE5F8F7),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(
+          Icons.monitor_heart_rounded,
+          color: Color(0xFF009FA4),
+          size: 36,
+        ),
+      ),
+      const SizedBox(height: 10),
+      const Text(
+        'Chequea',
+        style: TextStyle(
+          color: Color(0xFF10264C),
+          fontSize: 32,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -1.1,
+        ),
+      ),
+      const SizedBox(height: 2),
+      const Text(
+        'Ingresa a tu cuenta',
+        style: TextStyle(color: Color(0xFF647194), fontSize: 14),
+      ),
+    ],
+  );
+}
+
 class _CountryPicker extends StatelessWidget {
   const _CountryPicker({required this.country, required this.onChanged});
   final String country;
@@ -221,17 +265,18 @@ class _CountryPicker extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 10),
     decoration: BoxDecoration(
-      color: const Color(0xFFF1F1F1),
+      color: const Color(0xFFE8F8F6),
+      border: Border.all(color: const Color(0xFFCBECE8)),
       borderRadius: BorderRadius.circular(20),
     ),
     child: DropdownButtonHideUnderline(
       child: DropdownButton<String>(
         value: country,
         isDense: true,
-        dropdownColor: const Color(0xFFF1F1F1),
-        icon: const Icon(Icons.keyboard_arrow_down, color: Color(0xFF555555)),
+        dropdownColor: const Color(0xFFE8F8F6),
+        icon: const Icon(Icons.keyboard_arrow_down, color: Color(0xFF10264C)),
         style: const TextStyle(
-          color: Color(0xFF1A1A1A),
+          color: Color(0xFF10264C),
           fontWeight: FontWeight.w700,
           fontSize: 16,
         ),
@@ -261,14 +306,26 @@ class _FieldAction extends StatelessWidget {
   final Widget icon;
   final VoidCallback onPressed;
   @override
-  Widget build(BuildContext context) => Container(
-    width: 42,
-    height: 42,
-    decoration: BoxDecoration(
-      color: color,
-      borderRadius: const BorderRadius.horizontal(right: Radius.circular(8)),
+  Widget build(BuildContext context) => SizedBox(
+    width: 52,
+    height: 52,
+    child: Center(
+      child: Material(
+        color: color,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: IconButton(
+          onPressed: onPressed,
+          icon: icon,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+          style: IconButton.styleFrom(
+            minimumSize: const Size(38, 38),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+      ),
     ),
-    child: IconButton(onPressed: onPressed, icon: icon),
   );
 }
 
@@ -296,12 +353,14 @@ class _ValidationError extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 0),
-        const Text(
-          'Rellene este campo.',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+        const Expanded(
+          child: Text(
+            'Rellene este campo.',
+            style: TextStyle(
+              color: Color(0xFFE83D5A),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],

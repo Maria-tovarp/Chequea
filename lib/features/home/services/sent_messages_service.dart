@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -85,20 +86,26 @@ class SentMessagesService {
     final config = AppConfig.forCountry(session.country);
     final client = _client ?? http.Client();
     try {
-      final response = await client.get(
-        Uri.parse(
-          '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/messages/history',
-        ).replace(queryParameters: query),
-        headers: {
-          'Accept': 'application/json',
-          'x-api-key': config.apiKeyFor(session.country),
-          'Authorization': 'Bearer ${session.accessToken}',
-        },
-      );
+      final response = await client
+          .get(
+            Uri.parse(
+              '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/messages/history',
+            ).replace(queryParameters: query),
+            headers: {
+              'Accept': 'application/json',
+              'x-api-key': config.apiKeyFor(session.country),
+              'Authorization': 'Bearer ${session.accessToken}',
+            },
+          )
+          .timeout(const Duration(seconds: 60));
       final payload = jsonDecode(response.body);
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||
           payload is! Map<String, dynamic>) {
+        debugPrint(
+          'ChequeaApi: messages history page=${query['page']} failed '
+          'status=${response.statusCode}',
+        );
         throw const FormatException();
       }
       final results = payload['results'] is List
