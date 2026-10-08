@@ -1,17 +1,26 @@
 workflows:
   ios-unsigned:
-    name: CHEQUEA iOS Unsigned IPA
+    name: CHEQUEA iOS Unsigned
     instance_type: mac_mini_m2
     max_build_duration: 120
+
     environment:
       groups:
         - chequea_secrets
       flutter: stable
       xcode: latest
       cocoapods: default
+
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+
     scripts:
       - name: Get Flutter packages
-        script: flutter pub get
+        script: |
+          flutter pub get
+
       - name: Create secrets.json
         script: |
           mkdir -p config
@@ -21,25 +30,44 @@ workflows:
             "GUATEMALA_API_KEY": "$GUATEMALA_API_KEY"
           }
           EOF
+
+          echo "secrets.json created"
+          test -s config/secrets.json
+
       - name: Install CocoaPods
         script: |
-          cd ios
-          pod install
-          cd ..
-      - name: Build iOS without signing
+          find ios -name "Podfile" -execdir pod install \;
+
+      - name: Build unsigned iOS app
         script: |
           flutter build ios \
             --release \
             --no-codesign \
             --dart-define-from-file=config/secrets.json
-      - name: Create unsigned IPA
+
+      - name: Verify Runner.app
         script: |
-          rm -rf Payload
-          mkdir Payload
-          cp -R build/ios/iphoneos/Runner.app Payload/
-          zip -r chequea-unsigned.ipa Payload
-          rm -rf Payload
+          test -d build/ios/iphoneos/Runner.app
+          echo "Runner.app found"
+
+      - name: Package unsigned IPA
+        script: |
+          rm -rf "$CM_BUILD_DIR/Payload"
+          mkdir -p "$CM_BUILD_DIR/Payload"
+
+          cp -R \
+            "$CM_BUILD_DIR/build/ios/iphoneos/Runner.app" \
+            "$CM_BUILD_DIR/Payload/"
+
+          cd "$CM_BUILD_DIR"
+          zip -qry chequea-unsigned.ipa Payload
+
+          rm -rf "$CM_BUILD_DIR/Payload"
+
+          echo "Unsigned IPA created:"
+          ls -lh "$CM_BUILD_DIR/chequea-unsigned.ipa"
+
     artifacts:
       - chequea-unsigned.ipa
-      - build/ios/iphoneos/Runner.app
+      - build/ios/iphoneos/**/*.app
       - /tmp/xcodebuild_logs/*.log
