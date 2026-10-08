@@ -6,7 +6,7 @@ workflows:
 
     environment:
       groups:
-        - api_keys
+        - chequea_secrets
       flutter: 3.41.9
       xcode: 16.4
       cocoapods: default
