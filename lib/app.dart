@@ -23,68 +23,47 @@ class ChequeaApp extends StatefulWidget {
   State<ChequeaApp> createState() => _ChequeaAppState();
 }
 
-class _ChequeaAppState extends State<ChequeaApp> with WidgetsBindingObserver {
+class _ChequeaAppState extends State<ChequeaApp> {
   late UserSession? _session = widget.initialSession;
-  Timer? _resumeSplashTimer;
-  bool _wasBackgrounded = false;
-  bool _showResumeSplash = false;
+  Timer? _initialSplashTimer;
+  bool _showInitialSplash = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     final session = _session;
     if (session != null) {
       unawaited(_refreshSession(session));
     }
     if (widget.showInitialSplash) {
-      _showResumeSplash = true;
-      _resumeSplashTimer = Timer(const Duration(milliseconds: 1200), () {
-        if (mounted) setState(() => _showResumeSplash = false);
-      });
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      _wasBackgrounded = true;
-      _resumeSplashTimer?.cancel();
-      if (!_showResumeSplash) {
-        setState(() => _showResumeSplash = true);
-      }
-      return;
-    }
-
-    if (state == AppLifecycleState.resumed && _wasBackgrounded) {
-      _wasBackgrounded = false;
-      _resumeSplashTimer?.cancel();
-      _resumeSplashTimer = Timer(const Duration(milliseconds: 1200), () {
-        if (mounted) setState(() => _showResumeSplash = false);
+      _showInitialSplash = true;
+      _initialSplashTimer = Timer(const Duration(milliseconds: 1200), () {
+        if (mounted) setState(() => _showInitialSplash = false);
       });
     }
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _resumeSplashTimer?.cancel();
+    _initialSplashTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _refreshSession(UserSession session) async {
-    final result = await const AuthService().refreshSession(session);
-    final refreshed = result.session;
-    if (refreshed != null) {
-      await SessionStore.save(refreshed);
+    const authService = AuthService();
+    final result = await authService.refreshSession(session);
+    final refreshedSession = result.session;
+    UserSession? updatedSession;
+    if (refreshedSession != null) {
+      final profile = await authService.getProfile(refreshedSession);
+      updatedSession = profile.isSuccess ? profile.session : refreshedSession;
+      await SessionStore.save(updatedSession!);
     } else if (result.invalid) {
       await SessionStore.clear();
     }
     if (!mounted) return;
-    if (refreshed != null || result.invalid) {
-      setState(() => _session = refreshed);
+    if (updatedSession != null || result.invalid) {
+      setState(() => _session = updatedSession);
     }
   }
 
@@ -185,9 +164,9 @@ class _ChequeaAppState extends State<ChequeaApp> with WidgetsBindingObserver {
         fit: StackFit.expand,
         children: [
           ?child,
-          if (_showResumeSplash)
+          if (_showInitialSplash)
             ColoredBox(
-              key: const ValueKey('resume-splash'),
+              key: const ValueKey('initial-splash'),
               color: Colors.white,
               child: Center(
                 child: Image.asset(

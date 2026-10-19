@@ -706,6 +706,7 @@ class _HomePageState extends State<HomePage> {
         _session = updated;
         _displayNameOverride = updated.fullName;
       });
+      _showMessage('Perfil actualizado correctamente.', success: true);
     }
   }
 
