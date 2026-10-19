@@ -11,11 +11,13 @@ MVP móvil desarrollado con Flutter.
 - `lib/features/auth/pages`: pantalla de acceso.
 - `lib/features/home/pages`: pantalla principal autenticada.
 
-Las claves se inyectan al compilar; no se leen desde archivos incluidos en la aplicación:
+Las claves se inyectan al compilar; no se leen desde archivos incluidos en la aplicación. Para ejecutar la app en el emulador, crea `config/secrets.json` a partir de `config/secrets.example.json` y usa:
 
 ```powershell
-flutter run --dart-define=PANAMA_API_KEY=... --dart-define=GUATEMALA_API_KEY=...
+flutter run --dart-define-from-file=config/secrets.json
 ```
+
+No basta con hacer *hot reload* tras cambiar las claves: detén la aplicación y ejecútala de nuevo con el comando anterior.
 
 ## Getting Started
 

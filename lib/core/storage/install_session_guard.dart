@@ -20,6 +20,7 @@ class InstallSessionGuard {
     final preferences = await SharedPreferences.getInstance();
     final previousMarker = preferences.getString(_markerKey);
     await preferences.setString(_markerKey, marker);
-    return previousMarker == null || previousMarker != marker;
+    final previousInstallMarker = previousMarker?.split(':').first;
+    return previousInstallMarker != null && previousInstallMarker != marker;
   }
 }

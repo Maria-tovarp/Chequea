@@ -1,6 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import '../../../core/config/app_config.dart';
 import '../../home/pages/home_page.dart';
+import '../models/user_session.dart';
+import 'forgot_password_page.dart';
 import 'register_page.dart';
 import '../services/auth_service.dart';
 import '../services/session_store.dart';
@@ -15,7 +21,7 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _username = TextEditingController();
   final _password = TextEditingController();
-  String _country = 'Panamá';
+  final String _country = AppConfig.panama.name;
   bool _submitted = false;
   bool _loading = false;
   bool _showPassword = false;
@@ -41,8 +47,8 @@ class _LoginPageState extends State<LoginPage> {
       country: _country,
     );
     if (!mounted) return;
-    setState(() => _loading = false);
     if (result.isBrandingBlocked) {
+      setState(() => _loading = false);
       final brandingName = result.brandingName;
       if (brandingName == null) return;
       await showDialog<void>(
@@ -60,6 +66,7 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     if (!result.isSuccess) {
+      setState(() => _loading = false);
       final errorMessage =
           result.errorMessage ?? 'No fue posible iniciar sesiÃ³n.';
       ScaffoldMessenger.of(
@@ -67,14 +74,113 @@ class _LoginPageState extends State<LoginPage> {
       ).showSnackBar(SnackBar(content: Text(errorMessage)));
       return;
     }
-    final session = result.session;
-    if (session == null) return;
+    final loginSession = result.session;
+    if (loginSession == null) {
+      setState(() => _loading = false);
+      return;
+    }
+    final cachedSession = await SessionStore.load();
+    final profile = await widget.authService.getProfile(loginSession);
+    var session = profile.isSuccess
+        ? profile.session!
+        : _withCachedProfile(loginSession, cachedSession);
+    session = await _cacheProfilePhoto(session, cachedSession);
     await SessionStore.save(session);
     if (!mounted) return;
+    setState(() => _loading = false);
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => HomePage(session: session)),
     );
   }
+
+  UserSession _withCachedProfile(UserSession session, UserSession? cached) {
+    if (cached == null ||
+        cached.username != session.username ||
+        cached.country != session.country) {
+      return session;
+    }
+    return UserSession(
+      username: session.username,
+      country: session.country,
+      isChequeandomeAgent: session.isChequeandomeAgent,
+      refreshToken: session.refreshToken,
+      accessToken: session.accessToken,
+      fullName: cached.fullName ?? session.fullName,
+      email: cached.email ?? session.email,
+      cellphone: cached.cellphone ?? session.cellphone,
+      inviteLink: session.inviteLink ?? cached.inviteLink,
+      doctorPhotoPath: cached.doctorPhotoPath,
+      specialty: cached.specialty,
+      specialtyTitle: cached.specialtyTitle,
+      bankAccountNumber: cached.bankAccountNumber,
+      bankAccountType: cached.bankAccountType,
+      bankName: cached.bankName,
+      bankAccountHolder: cached.bankAccountHolder,
+    );
+  }
+
+  Future<UserSession> _cacheProfilePhoto(
+    UserSession session,
+    UserSession? cached,
+  ) async {
+    final photoUrl = session.doctorPhotoPath?.trim() ?? '';
+    if (!photoUrl.startsWith('http://') && !photoUrl.startsWith('https://')) {
+      return session;
+    }
+
+    final cachedPath =
+        cached?.username == session.username &&
+            cached?.country == session.country
+        ? cached?.doctorPhotoPath
+        : null;
+    try {
+      final response = await http
+          .get(Uri.parse(photoUrl))
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          response.bodyBytes.isEmpty) {
+        throw const HttpException('No fue posible descargar la foto.');
+      }
+      final directory = await getApplicationDocumentsDirectory();
+      final safeUsername = session.username.replaceAll(
+        RegExp(r'[^a-zA-Z0-9]'),
+        '_',
+      );
+      final photoFile = File(
+        '${directory.path}/doctor-profile-$safeUsername.jpg',
+      );
+      final temporary = File('${photoFile.path}.tmp');
+      await temporary.writeAsBytes(response.bodyBytes, flush: true);
+      await temporary.rename(photoFile.path);
+      return _withPhotoPath(session, photoFile.path);
+    } on Exception {
+      if (cachedPath != null && await File(cachedPath).exists()) {
+        return _withPhotoPath(session, cachedPath);
+      }
+      return session;
+    }
+  }
+
+  UserSession _withPhotoPath(UserSession session, String photoPath) =>
+      UserSession(
+        username: session.username,
+        country: session.country,
+        isChequeandomeAgent: session.isChequeandomeAgent,
+        refreshToken: session.refreshToken,
+        accessToken: session.accessToken,
+        fullName: session.fullName,
+        email: session.email,
+        cellphone: session.cellphone,
+        inviteLink: session.inviteLink,
+        doctorPhotoPath: photoPath,
+        specialty: session.specialty,
+        specialtyTitle: session.specialtyTitle,
+        bankAccountNumber: session.bankAccountNumber,
+        bankAccountType: session.bankAccountType,
+        bankName: session.bankName,
+        bankAccountHolder: session.bankAccountHolder,
+      );
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -98,13 +204,9 @@ class _LoginPageState extends State<LoginPage> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           const _AuthBrand(),
-                          const SizedBox(height: 22),
-                          _CountryPicker(
-                            country: _country,
-                            onChanged: (value) =>
-                                setState(() => _country = value),
-                          ),
-                          const SizedBox(height: 34),
+                          const SizedBox(height: 14),
+                          const _FixedCountryLabel(),
+                          const SizedBox(height: 28),
                           TextField(
                             controller: _username,
                             style: const TextStyle(color: Color(0xFF1A1A1A)),
@@ -120,11 +222,7 @@ class _LoginPageState extends State<LoginPage> {
                                   ? const _ValidationError()
                                   : null,
                               suffixIcon: _FieldAction(
-                                color: const Color(0xFF10264C),
-                                icon: const Icon(
-                                  Icons.close,
-                                  color: Colors.white,
-                                ),
+                                icon: const Icon(Icons.close),
                                 onPressed: _username.clear,
                               ),
                             ),
@@ -146,7 +244,6 @@ class _LoginPageState extends State<LoginPage> {
                                   ? const _ValidationError()
                                   : null,
                               suffixIcon: _FieldAction(
-                                color: const Color(0xFF009FA4),
                                 onPressed: () => setState(
                                   () => _showPassword = !_showPassword,
                                 ),
@@ -154,7 +251,6 @@ class _LoginPageState extends State<LoginPage> {
                                   _showPassword
                                       ? Icons.visibility_off
                                       : Icons.visibility,
-                                  color: Colors.white,
                                 ),
                               ),
                             ),
@@ -204,6 +300,24 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                             ),
                           ),
+                          const SizedBox(height: 30),
+                          TextButton(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    ForgotPasswordPage(country: _country),
+                              ),
+                            ),
+                            child: const Text(
+                              '¿Olvidaste tu contraseña?',
+                              style: TextStyle(
+                                color: Color(0xFF009FA4),
+                                fontSize: 15,
+                                decoration: TextDecoration.underline,
+                                decorationColor: Color(0xFF009FA4),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -224,85 +338,41 @@ class _AuthBrand extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      Container(
-        width: 62,
-        height: 62,
-        decoration: const BoxDecoration(
-          color: Color(0xFFE5F8F7),
-          shape: BoxShape.circle,
-        ),
-        child: const Icon(
-          Icons.monitor_heart_rounded,
-          color: Color(0xFF009FA4),
-          size: 36,
-        ),
-      ),
-      const SizedBox(height: 10),
-      const Text(
-        'Chequea',
-        style: TextStyle(
-          color: Color(0xFF10264C),
-          fontSize: 32,
-          fontWeight: FontWeight.w800,
-          letterSpacing: -1.1,
-        ),
-      ),
-      const SizedBox(height: 2),
-      const Text(
-        'Ingresa a tu cuenta',
-        style: TextStyle(color: Color(0xFF647194), fontSize: 14),
+      Image.asset(
+        'assets/logo/logo_720px_transparente.png',
+        width: 230,
+        fit: BoxFit.contain,
       ),
     ],
   );
 }
 
-class _CountryPicker extends StatelessWidget {
-  const _CountryPicker({required this.country, required this.onChanged});
-  final String country;
-  final ValueChanged<String> onChanged;
+class _FixedCountryLabel extends StatelessWidget {
+  const _FixedCountryLabel();
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10),
-    decoration: BoxDecoration(
-      color: const Color(0xFFE8F8F6),
-      border: Border.all(color: const Color(0xFFCBECE8)),
-      borderRadius: BorderRadius.circular(20),
-    ),
-    child: DropdownButtonHideUnderline(
-      child: DropdownButton<String>(
-        value: country,
-        isDense: true,
-        dropdownColor: const Color(0xFFE8F8F6),
-        icon: const Icon(Icons.keyboard_arrow_down, color: Color(0xFF10264C)),
-        style: const TextStyle(
-          color: Color(0xFF10264C),
-          fontWeight: FontWeight.w700,
-          fontSize: 16,
+  Widget build(BuildContext context) => Semantics(
+    label: 'País: Panamá',
+    child: const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('🇵🇦', style: TextStyle(fontSize: 16)),
+        SizedBox(width: 7),
+        Text(
+          'Panamá',
+          style: TextStyle(
+            color: Color(0xFF10264C),
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
         ),
-        items: AppConfig.countries
-            .map(
-              (item) => DropdownMenuItem(
-                value: item.name,
-                child: Text('${item.flag}  ${item.name}'),
-              ),
-            )
-            .toList(),
-        onChanged: (value) {
-          if (value != null) onChanged(value);
-        },
-      ),
+      ],
     ),
   );
 }
 
 class _FieldAction extends StatelessWidget {
-  const _FieldAction({
-    required this.color,
-    required this.icon,
-    required this.onPressed,
-  });
-  final Color color;
+  const _FieldAction({required this.icon, required this.onPressed});
   final Widget icon;
   final VoidCallback onPressed;
   @override
@@ -311,12 +381,13 @@ class _FieldAction extends StatelessWidget {
     height: 52,
     child: Center(
       child: Material(
-        color: color,
+        color: Colors.transparent,
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         child: IconButton(
           onPressed: onPressed,
           icon: icon,
+          color: const Color(0xFF3E4650),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints.tightFor(width: 38, height: 38),
           style: IconButton.styleFrom(

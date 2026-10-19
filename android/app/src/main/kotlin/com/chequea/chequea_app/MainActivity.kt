@@ -14,7 +14,7 @@ class MainActivity : FlutterActivity() {
                     return@setMethodCallHandler
                 }
                 val info = packageManager.getPackageInfo(packageName, 0)
-                result.success("${info.firstInstallTime}:${info.lastUpdateTime}")
+                result.success(info.firstInstallTime.toString())
             }
     }
 }

@@ -148,6 +148,22 @@ class _RegisterPageState extends State<RegisterPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Semantics(
+                  button: true,
+                  label: 'Volver',
+                  child: IconButton(
+                    tooltip: 'Volver',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    color: const Color(0xFF10264C),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
                 Center(child: const _RegisterBrand()),
                 const SizedBox(height: 4),
                 Center(
@@ -177,7 +193,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   padding: EdgeInsets.only(top: 4),
                   child: Text(
                     'Utilice sólo letras minúsculas, dígitos, guión y/o guión bajo. Longitud requerida entre 3 y 50 caracteres.',
-                    style: TextStyle(color: Color(0xFF647194), fontSize: 14),
+                    style: TextStyle(color: Color(0xFF647194), fontSize: 12),
                   ),
                 ),
                 const SizedBox(height: 22),
@@ -374,10 +390,12 @@ class _RegisterBrand extends StatelessWidget {
           color: Color(0xFFE5F8F7),
           shape: BoxShape.circle,
         ),
-        child: const Icon(
-          Icons.monitor_heart_rounded,
-          color: Color(0xFF009FA4),
-          size: 34,
+        child: Image.asset(
+          'assets/logo/Icono_180px_transparente.png',
+          width: 42,
+          height: 42,
+          fit: BoxFit.contain,
+          semanticLabel: 'Chequea',
         ),
       ),
       const SizedBox(height: 8),

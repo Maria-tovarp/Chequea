@@ -5,10 +5,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:chequea_app/features/auth/models/user_session.dart';
 import 'package:chequea_app/features/auth/services/auth_service.dart';
+import 'package:chequea_app/core/config/app_config.dart';
 import 'package:chequea_app/features/home/pages/sent_messages_page.dart';
 import 'package:chequea_app/features/home/services/referred_appointments_service.dart';
 
 void main() {
+  test('Panamá es el único país habilitado', () {
+    expect(AppConfig.countries, [AppConfig.panama]);
+    expect(AppConfig.isSupportedCountry('Panamá'), isTrue);
+    expect(AppConfig.isSupportedCountry('Guatemala'), isFalse);
+  });
+
   test('acepta una respuesta de refresh token de la API', () {
     final response = http.Response(
       '{"refresh_token":"token-de-prueba","username":"maria-tovar"}',

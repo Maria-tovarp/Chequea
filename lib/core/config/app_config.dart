@@ -20,10 +20,14 @@ class AppConfig {
 
   static const apiKey = String.fromEnvironment('CHEQUEA_API_KEY');
 
+  static const panama = CountryOption(
+    code: 'panama',
+    name: 'Panamá',
+    flag: '🇵🇦',
+  );
+
   static String apiKeyForCountry(String country) {
-    return country == 'Guatemala'
-        ? const String.fromEnvironment('GUATEMALA_API_KEY')
-        : const String.fromEnvironment('PANAMA_API_KEY');
+    return const String.fromEnvironment('PANAMA_API_KEY');
   }
 
   static const environment = String.fromEnvironment(
@@ -31,31 +35,22 @@ class AppConfig {
     defaultValue: 'development',
   );
 
-  static const List<CountryOption> countries = [
-    CountryOption(code: 'panama', name: 'Panamá', flag: '🇵🇦'),
-    CountryOption(code: 'guatemala', name: 'Guatemala', flag: '🇬🇹'),
-  ];
+  static const List<CountryOption> countries = [panama];
+
+  static bool isSupportedCountry(String country) {
+    final normalized = country.trim().toLowerCase();
+    return normalized == 'panamá' || normalized == 'panama';
+  }
 
   static bool get hasApiKey => apiKey.isNotEmpty;
 
   static CountryConfig forCountry(String country) {
-    return country == 'Guatemala'
-        ? const CountryConfig(
-            country: 'Guatemala',
-            loginUrl:
-                'https://prepro.chequeandome.com.gt/chequea/sesion/login/',
-            websiteUrl:
-                'https://prepro.chequeandome.com.gt/chequea/sesion/login/',
-            apiKeyEnvironment: 'GUATEMALA_API_KEY',
-          )
-        : const CountryConfig(
-            country: 'Panamá',
-            loginUrl:
-                'https://prepro.chequeandome.com.pa/chequea/sesion/login/',
-            websiteUrl:
-                'https://prepro.chequeandome.com.pa/chequea/sesion/login/',
-            apiKeyEnvironment: 'PANAMA_API_KEY',
-          );
+    return const CountryConfig(
+      country: 'Panamá',
+      loginUrl: 'https://prepro.chequeandome.com.pa/chequea/sesion/login/',
+      websiteUrl: 'https://prepro.chequeandome.com.pa/chequea/sesion/login/',
+      apiKeyEnvironment: 'PANAMA_API_KEY',
+    );
   }
 }
 

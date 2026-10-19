@@ -8,7 +8,10 @@ import '../../auth/pages/login_page.dart';
 import '../../auth/services/auth_service.dart';
 import '../../auth/services/session_store.dart';
 import 'referred_appointments_page.dart';
+import 'home_page.dart';
 import '../services/sent_messages_service.dart';
+import '../widgets/commissions_coming_soon_dialog.dart';
+import '../widgets/app_notice_dialog.dart';
 
 class SentMessagesPage extends StatefulWidget {
   const SentMessagesPage({super.key, required this.session});
@@ -31,6 +34,7 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
   bool _loading = true;
   bool _filtering = false;
   bool _sessionExpired = false;
+  bool _filtersOpen = false;
 
   @override
   void initState() {
@@ -112,10 +116,13 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
         cellphone: _cellphone.text,
       );
     } on SentMessagesException {
-      final refreshed = await const AuthService().refreshSession(_session);
+      final refresh = await const AuthService().refreshSession(_session);
+      final refreshed = refresh.session;
       if (refreshed == null) {
-        await SessionStore.clear();
-        if (mounted) setState(() => _sessionExpired = true);
+        if (refresh.invalid) {
+          await SessionStore.clear();
+          if (mounted) setState(() => _sessionExpired = true);
+        }
         rethrow;
       }
       _session = refreshed;
@@ -157,14 +164,28 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
   }
 
   Future<void> _pickDate(bool start) async {
-    final selected = await showDatePicker(
+    var cleared = false;
+    final selected = await showDialog<DateTime>(
       context: context,
-      initialDate: start
-          ? (_startDate ?? DateTime.now())
-          : (_endDate ?? DateTime.now()),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+      builder: (dialogContext) => _ClearableDatePicker(
+        initialDate: start
+            ? (_startDate ?? DateTime.now())
+            : (_endDate ?? DateTime.now()),
+        firstDate: DateTime(2020),
+        lastDate: DateTime.now(),
+        onClear: () => cleared = true,
+      ),
     );
+    if (cleared && mounted) {
+      setState(() {
+        if (start) {
+          _startDate = null;
+        } else {
+          _endDate = null;
+        }
+      });
+      return;
+    }
     if (selected != null) {
       setState(() {
         if (start) {
@@ -216,10 +237,33 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
       ? ''
       : '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
 
+  void _goHome() => Navigator.of(
+    context,
+  ).pushReplacement(appPageRoute(HomePage(session: _session)));
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: Colors.white,
-    body: SafeArea(bottom: false, child: _body()),
+    appBar: AppBar(
+      backgroundColor: Colors.white,
+      foregroundColor: const Color(0xFF10264C),
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      toolbarHeight: 56,
+      leadingWidth: 36,
+      titleSpacing: 0,
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: _goHome,
+      ),
+      centerTitle: true,
+      title: const Text(
+        'Enviados',
+        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      ),
+      actions: [const HeaderNoticeActions()],
+    ),
+    body: SafeArea(top: false, bottom: false, child: _body()),
     bottomNavigationBar: _SentMessagesBottomMenu(session: _session),
   );
 
@@ -232,7 +276,6 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
           child: CustomScrollView(
             controller: _scrollController,
             slivers: [
-              SliverToBoxAdapter(child: _header()),
               if (!_sessionExpired) ...[SliverToBoxAdapter(child: _filters())],
               if (_sessionExpired)
                 SliverFillRemaining(child: _sessionExpiredState())
@@ -276,35 +319,6 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
       ],
     );
   }
-
-  Widget _header() => SizedBox(
-    height: 88,
-    child: Row(
-      children: [
-        if (Navigator.of(context).canPop())
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back),
-            color: const Color(0xFF10264C),
-          )
-        else
-          const SizedBox(width: 48),
-        const Expanded(
-          child: Text(
-            'Mis enviados',
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            style: TextStyle(
-              color: Color(0xFF10264C),
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-        const SizedBox(width: 48),
-      ],
-    ),
-  );
 
   Widget _emptyMessagesState() => Center(
     child: Container(
@@ -377,121 +391,205 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
     ),
   );
 
-  Widget _filters() => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+  Widget _filters() => Container(
+    margin: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF8FAFE),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFFE4EAF4)),
+    ),
     child: Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _DateField(
-                label: 'Fecha desde',
-                value: _date(_startDate),
-                onTap: () => _pickDate(true),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _DateField(
-                label: 'Fecha hasta',
-                value: _date(_endDate),
-                onTap: () => _pickDate(false),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _cellphone,
-                keyboardType: TextInputType.phone,
-                style: const TextStyle(
-                  color: Color(0xFF10264C),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
+        Padding(
+          padding: const EdgeInsets.all(6),
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              onTap: () => setState(() => _filtersOpen = !_filtersOpen),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 13,
+                  vertical: 11,
                 ),
-                decoration: InputDecoration(
-                  prefixIcon: const Icon(
-                    Icons.phone_outlined,
-                    color: Color(0xFF10264C),
-                  ),
-                  hintText: 'Celular',
-                  hintStyle: const TextStyle(
-                    color: Color(0xFF647194),
-                    fontSize: 14,
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 15),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE4EAF4)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE4EAF4)),
-                  ),
+                child: Row(
+                  children: [
+                    const CircleAvatar(
+                      radius: 17,
+                      backgroundColor: Color(0xFFD2F1FB),
+                      foregroundColor: Color(0xFF24364B),
+                      child: Icon(Icons.tune, size: 19),
+                    ),
+                    const SizedBox(width: 11),
+                    const Expanded(
+                      child: Text(
+                        'Filtrar enviados',
+                        style: TextStyle(
+                          color: Color(0xFF24364B),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF47D1B6),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _filtersOpen
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        size: 19,
+                        color: const Color(0xFF24364B),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF009FA4),
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: const Color(0xFF009FA4),
-              disabledForegroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              textStyle: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            onPressed: _loading ? null : () => _load(announceFiltering: true),
-            icon: const Icon(Icons.search_rounded, size: 29),
-            label: const Text('Filtrar'),
           ),
         ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: OutlinedButton.icon(
-            style: const ButtonStyle(
-              foregroundColor: WidgetStatePropertyAll(Color(0xFF009FA4)),
-              side: WidgetStatePropertyAll(
-                BorderSide(color: Color(0xFF009FA4)),
-              ),
-              padding: WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              ),
-              shape: WidgetStatePropertyAll(StadiumBorder()),
+        if (_filtersOpen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DateField(
+                        label: 'Fecha desde',
+                        value: _date(_startDate),
+                        onTap: () => _pickDate(true),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _DateField(
+                        label: 'Fecha hasta',
+                        value: _date(_endDate),
+                        onTap: () => _pickDate(false),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _cellphone,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(
+                          color: Color(0xFF10264C),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(
+                            Icons.phone_outlined,
+                            color: Color(0xFF10264C),
+                          ),
+                          hintText: 'Celular',
+                          hintStyle: const TextStyle(
+                            color: Color(0xFF647194),
+                            fontSize: 14,
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 15,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFE4EAF4),
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFE4EAF4),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 42,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF009FA4),
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: const Color(0xFF009FA4),
+                            disabledForegroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          onPressed: _loading
+                              ? null
+                              : () => _load(announceFiltering: true),
+                          icon: const Icon(Icons.search_rounded, size: 24),
+                          label: const Text('Filtrar'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      height: 42,
+                      child: OutlinedButton.icon(
+                        style: const ButtonStyle(
+                          foregroundColor: WidgetStatePropertyAll(
+                            Color(0xFF009FA4),
+                          ),
+                          side: WidgetStatePropertyAll(
+                            BorderSide(color: Color(0xFF009FA4)),
+                          ),
+                          padding: WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(horizontal: 14),
+                          ),
+                          shape: WidgetStatePropertyAll(StadiumBorder()),
+                          textStyle: WidgetStatePropertyAll(
+                            TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        onPressed: _loading ? null : _clearFilters,
+                        icon: const Icon(Icons.restart_alt, size: 18),
+                        label: const Text('Limpiar'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            onPressed: _loading ? null : _clearFilters,
-            icon: const Icon(Icons.restart_alt, size: 18),
-            label: const Text('Limpiar'),
           ),
-        ),
       ],
     ),
   );
 
   Widget _pagination(SentMessagesResult data) => Container(
-    color: Colors.white,
+    color: const Color(0xFF24364B),
     child: SafeArea(
       top: false,
+      bottom: false,
       child: Container(
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: Color(0xFFE4EAF4))),
-        ),
-        padding: const EdgeInsets.fromLTRB(20, 5, 12, 5),
+        padding: const EdgeInsets.fromLTRB(20, 0, 12, 0),
         child: Row(
           children: [
             Expanded(
@@ -502,24 +600,30 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
                   visible: data.messages.length,
                   total: data.total,
                 ),
-                style: const TextStyle(fontSize: 15, color: Color(0xFF647194)),
+                style: const TextStyle(fontSize: 13, color: Color(0xFFF7FAFF)),
               ),
             ),
             IconButton(
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 36),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
               onPressed: data.page > 1 && !_loading
                   ? () => _load(page: data.page - 1)
                   : null,
-              icon: const Icon(Icons.chevron_left, color: Color(0xFF10264C)),
+              icon: const Icon(Icons.chevron_left, color: Color(0xFFF7FAFF)),
             ),
             Text(
               '${data.page}',
-              style: const TextStyle(color: Color(0xFF10264C)),
+              style: const TextStyle(color: Color(0xFFF7FAFF)),
             ),
             IconButton(
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 36),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
               onPressed: data.hasNext && !_loading
                   ? () => _load(page: data.page + 1)
                   : null,
-              icon: const Icon(Icons.chevron_right, color: Color(0xFF10264C)),
+              icon: const Icon(Icons.chevron_right, color: Color(0xFFF7FAFF)),
             ),
           ],
         ),
@@ -538,6 +642,60 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
     final last = first + visible - 1;
     return 'Mostrando $first–$last de $total mensajes';
   }
+}
+
+class _ClearableDatePicker extends StatefulWidget {
+  const _ClearableDatePicker({
+    required this.initialDate,
+    required this.firstDate,
+    required this.lastDate,
+    required this.onClear,
+  });
+  final DateTime initialDate;
+  final DateTime firstDate;
+  final DateTime lastDate;
+  final VoidCallback onClear;
+
+  @override
+  State<_ClearableDatePicker> createState() => _ClearableDatePickerState();
+}
+
+class _ClearableDatePickerState extends State<_ClearableDatePicker> {
+  late DateTime _selected = widget.initialDate;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Seleccionar fecha'),
+    contentPadding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+    content: SizedBox(
+      width: 320,
+      height: 330,
+      child: CalendarDatePicker(
+        initialDate: _selected,
+        firstDate: widget.firstDate,
+        lastDate: widget.lastDate,
+        onDateChanged: (value) => setState(() => _selected = value),
+      ),
+    ),
+    actions: [
+      TextButton.icon(
+        onPressed: () {
+          widget.onClear();
+          Navigator.of(context).pop();
+        },
+        icon: const Icon(Icons.clear),
+        label: const Text('Limpiar'),
+      ),
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancelar'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.of(context).pop(_selected),
+        child: const Text('OK'),
+      ),
+    ],
+  );
 }
 
 class _DateField extends StatelessWidget {
@@ -808,9 +966,6 @@ class _MessageItemState extends State<_MessageItem> {
     final services = expandable && !_expanded
         ? message.services.take(5)
         : message.services;
-    final sender = message.referrerName.isEmpty
-        ? message.referrerUsername
-        : message.referrerName;
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       elevation: 0,
@@ -833,10 +988,15 @@ class _MessageItemState extends State<_MessageItem> {
                   CircleAvatar(
                     radius: 27,
                     backgroundColor: _avatarBackground(widget.number),
-                    child: Icon(
-                      Icons.person_rounded,
-                      size: 35,
-                      color: _avatarColor(widget.number),
+                    child: Padding(
+                      padding: const EdgeInsets.all(13),
+                      child: SvgPicture.asset(
+                        'assets/svg/whatsapp.svg',
+                        colorFilter: ColorFilter.mode(
+                          _avatarColor(widget.number),
+                          BlendMode.srcIn,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -845,8 +1005,10 @@ class _MessageItemState extends State<_MessageItem> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _displayName(sender),
-                          maxLines: 2,
+                          message.cellphone.isEmpty
+                              ? 'Celular no disponible'
+                              : message.cellphone,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: Color(0xFF10264C),
@@ -854,12 +1016,43 @@ class _MessageItemState extends State<_MessageItem> {
                             fontWeight: FontWeight.w800,
                           ),
                         ),
-                        if (message.cellphone.isNotEmpty)
-                          Text(
-                            message.cellphone,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: Color(0xFF647194),
+                        if (message.createdDate != null)
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.calendar_month_outlined,
+                                  size: 14,
+                                  color: Color(0xFF647194),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _formattedDate(message.createdDate),
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Color(0xFF647194),
+                                  ),
+                                ),
+                                if (message.createdTime?.isNotEmpty ==
+                                    true) ...[
+                                  const SizedBox(width: 10),
+                                  const Icon(
+                                    Icons.access_time_rounded,
+                                    size: 14,
+                                    color: Color(0xFF647194),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    message.createdTime!,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Color(0xFF647194),
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                       ],
@@ -872,40 +1065,26 @@ class _MessageItemState extends State<_MessageItem> {
                 padding: EdgeInsets.symmetric(vertical: 11),
                 child: Divider(height: 1, color: Color(0xFFB9E9DF)),
               ),
-              _DetailRow(icon: Icons.phone_outlined, text: message.cellphone),
-              const SizedBox(height: 8),
-              const _DetailRow(
-                icon: Icons.medical_information_outlined,
-                text: 'Exámenes enviados',
-                emphasized: true,
-              ),
-              const SizedBox(height: 4),
               if (plain.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(left: 28),
-                  child: Text(plain, style: const TextStyle(height: 1.35)),
-                )
+                Text(plain, style: const TextStyle(height: 1.35))
               else
-                Padding(
-                  padding: const EdgeInsets.only(left: 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: services
-                        .map(
-                          (service) => Padding(
-                            padding: const EdgeInsets.only(bottom: 3),
-                            child: Text(
-                              '• $service',
-                              style: const TextStyle(height: 1.28),
-                            ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: services
+                      .map(
+                        (service) => Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Text(
+                            '• $service',
+                            style: const TextStyle(height: 1.28),
                           ),
-                        )
-                        .toList(),
-                  ),
+                        ),
+                      )
+                      .toList(),
                 ),
               if (expandable)
                 Padding(
-                  padding: const EdgeInsets.only(top: 8, left: 28),
+                  padding: const EdgeInsets.only(top: 8),
                   child: Row(
                     children: [
                       Icon(
@@ -926,42 +1105,6 @@ class _MessageItemState extends State<_MessageItem> {
                     ],
                   ),
                 ),
-              if (message.createdDate != null) ...[
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.calendar_month_outlined,
-                      size: 24,
-                      color: Color(0xFF647194),
-                    ),
-                    const SizedBox(width: 9),
-                    Text(
-                      _formattedDate(message.createdDate),
-                      style: const TextStyle(
-                        color: Color(0xFF647194),
-                        fontSize: 15,
-                      ),
-                    ),
-                    if (message.createdTime?.isNotEmpty == true) ...[
-                      const SizedBox(width: 24),
-                      const Icon(
-                        Icons.access_time_rounded,
-                        size: 24,
-                        color: Color(0xFF647194),
-                      ),
-                      const SizedBox(width: 9),
-                      Text(
-                        message.createdTime!,
-                        style: const TextStyle(
-                          color: Color(0xFF647194),
-                          fontSize: 15,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
             ],
           ),
         ),
@@ -1006,16 +1149,16 @@ class _DateBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       decoration: BoxDecoration(
         color: const Color(0xFFE0F6E8),
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: const Text(
         'Enviado',
         style: TextStyle(
           color: Color(0xFF07843F),
-          fontSize: 16,
+          fontSize: 9,
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -1061,15 +1204,17 @@ class _SentMessagesBottomMenu extends StatelessWidget {
         children: [
           Expanded(
             child: _BottomMenuItem(
-              label: 'Enviar\nmensaje',
-              asset: 'assets/svg/health-checkup.svg',
-              onPressed: () => Navigator.of(context).pop(),
+              label: 'Inicio',
+              asset: 'assets/svg/Icono-Inactivo-Inicio-Botonera.svg',
+              onPressed: () => Navigator.of(
+                context,
+              ).pushReplacement(appPageRoute(HomePage(session: session))),
             ),
           ),
           const _MenuDivider(),
           Expanded(
             child: _BottomMenuItem(
-              label: 'Mis enviados',
+              label: 'Enviados',
               asset: 'assets/svg/Icono de enviados - líneas celeste.svg',
               selected: true,
               onPressed: () {},
@@ -1078,7 +1223,7 @@ class _SentMessagesBottomMenu extends StatelessWidget {
           const _MenuDivider(),
           Expanded(
             child: _BottomMenuItem(
-              label: 'Mis referencias',
+              label: 'Referencias',
               asset: 'assets/svg/Icono de referencias - líneas celestes.svg',
               onPressed: () => Navigator.of(context).pushReplacement(
                 appPageRoute(ReferredAppointmentsPage(session: session)),
@@ -1088,9 +1233,9 @@ class _SentMessagesBottomMenu extends StatelessWidget {
           const _MenuDivider(),
           Expanded(
             child: _BottomMenuItem(
-              label: 'Invitar a un amigo',
-              asset: 'assets/svg/Icono de invitar amigo - celeste.svg',
-              onPressed: () => _copyInviteLink(context),
+              label: 'Comisiones',
+              asset: 'assets/svg/Icono de comisiones - líneas gris.svg',
+              onPressed: () => showCommissionsComingSoonDialog(context),
             ),
           ),
         ],

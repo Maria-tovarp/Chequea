@@ -8,7 +8,10 @@ import '../../auth/pages/login_page.dart';
 import '../../auth/services/auth_service.dart';
 import '../../auth/services/session_store.dart';
 import 'sent_messages_page.dart';
+import 'home_page.dart';
 import '../services/referred_appointments_service.dart';
+import '../widgets/commissions_coming_soon_dialog.dart';
+import '../widgets/app_notice_dialog.dart';
 
 class ReferredAppointmentsPage extends StatefulWidget {
   const ReferredAppointmentsPage({super.key, required this.session});
@@ -41,8 +44,6 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
   bool get _hasActiveFilters =>
       _status != null ||
       _attendance != null ||
-      _creationDateStart != null ||
-      _creationDateEnd != null ||
       _appointmentDateStart != null ||
       _appointmentDateEnd != null;
   bool get _attendanceIsRestricted =>
@@ -177,13 +178,6 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         return false;
       }
       if (!_isWithinDates(
-        appointment.creationDate,
-        _creationDateStart,
-        _creationDateEnd,
-      )) {
-        return false;
-      }
-      if (!_isWithinDates(
         appointment.appointmentDate,
         _appointmentDateStart,
         _appointmentDateEnd,
@@ -229,10 +223,13 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         appointmentDateEnd: _appointmentDateEnd,
       );
     } on ReferredAppointmentsException {
-      final refreshed = await const AuthService().refreshSession(_session);
+      final refresh = await const AuthService().refreshSession(_session);
+      final refreshed = refresh.session;
       if (refreshed == null) {
-        await SessionStore.clear();
-        if (mounted) setState(() => _sessionExpired = true);
+        if (refresh.invalid) {
+          await SessionStore.clear();
+          if (mounted) setState(() => _sessionExpired = true);
+        }
         rethrow;
       }
       _session = refreshed;
@@ -262,8 +259,6 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
     setState(() {
       _status = null;
       _attendance = null;
-      _creationDateStart = null;
-      _creationDateEnd = null;
       _appointmentDateStart = null;
       _appointmentDateEnd = null;
     });
@@ -277,12 +272,32 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
     final current = appointmentDate
         ? (isEnd ? _appointmentDateEnd : _appointmentDateStart)
         : (isEnd ? _creationDateEnd : _creationDateStart);
-    final selected = await showDatePicker(
+    var cleared = false;
+    final selected = await showDialog<DateTime>(
       context: context,
-      initialDate: current ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 3650)),
+      builder: (dialogContext) => _ReferenceClearableDatePicker(
+        initialDate: current ?? DateTime.now(),
+        firstDate: DateTime(2020),
+        lastDate: DateTime.now().add(const Duration(days: 3650)),
+        onClear: () => cleared = true,
+      ),
     );
+    if (cleared && mounted) {
+      setState(() {
+        if (appointmentDate) {
+          if (isEnd) {
+            _appointmentDateEnd = null;
+          } else {
+            _appointmentDateStart = null;
+          }
+        } else if (isEnd) {
+          _creationDateEnd = null;
+        } else {
+          _creationDateStart = null;
+        }
+      });
+      return;
+    }
     if (selected == null || !mounted) return;
     setState(() {
       if (appointmentDate) {
@@ -307,7 +322,11 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
 
   void _goBack() {
     final navigator = Navigator.of(context);
-    if (navigator.canPop()) navigator.pop();
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+    navigator.pushReplacement(appPageRoute(HomePage(session: _session)));
   }
 
   @override
@@ -323,6 +342,7 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         foregroundColor: const Color(0xFF10264C),
         surfaceTintColor: Colors.transparent,
         elevation: 0,
+        toolbarHeight: 56,
         leadingWidth: 36,
         titleSpacing: 0,
         leading: IconButton(
@@ -331,9 +351,10 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         ),
         centerTitle: true,
         title: const Text(
-          'Mis referencias',
-          style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+          'Referencias',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
         ),
+        actions: [const HeaderNoticeActions()],
       ),
       body: SafeArea(
         top: false,
@@ -416,72 +437,51 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: Column(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _FilterDropdown(
-                        label: 'Estado de cita',
-                        value: _status,
-                        items: const {
-                          'pending': 'En Espera',
-                          'ok': 'Confirmada',
-                          'cancel': 'Cancelada',
-                          'rescheduling': 'Reprogramando',
-                        },
-                        onChanged: (value) => setState(() {
-                          _status = value;
-                          if (_attendanceIsRestricted) _attendance = null;
-                        }),
-                      ),
+                _FilterDropdown(
+                  label: 'Estado de cita',
+                  value: _status == null
+                      ? null
+                      : '${_status!}|${_attendance ?? ''}',
+                  items: const {
+                    'pending|': 'Pendiente',
+                    'ok|': 'Confirmada',
+                    'cancel|': 'Cancelada',
+                    'rescheduling|': 'Reprogramando',
+                    'ok|yes': 'Sí asistió',
+                    'ok|no': 'No asistió',
+                    'ok|pending': 'En espera',
+                  },
+                  onChanged: (value) => setState(() {
+                    if (value == null) {
+                      _status = null;
+                      _attendance = null;
+                      return;
+                    }
+                    final values = value.split('|');
+                    _status = values.first;
+                    _attendance = values.length > 1 && values[1].isNotEmpty
+                        ? values[1]
+                        : null;
+                  }),
+                ),
+                const SizedBox(height: 10),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Fecha de cita',
+                    style: TextStyle(
+                      color: Color(0xFF24364B),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _FilterDropdown(
-                        label: 'Estado de asistencia',
-                        value: _attendance,
-                        items: _attendanceIsRestricted
-                            ? const {}
-                            : const {
-                                'pending': 'En Espera',
-                                'yes': 'Sí Asistió',
-                                'no': 'No Asistió',
-                              },
-                        onChanged: (value) => setState(() {
-                          _attendance = value;
-                          if (value != null) _status = 'ok';
-                        }),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Row(
                   children: [
                     Expanded(
                       child: _ReferenceDateField(
-                        label: 'Fecha entrada DESDE',
-                        value: _date(_creationDateStart),
-                        onTap: () =>
-                            _pickDate(appointmentDate: false, isEnd: false),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _ReferenceDateField(
-                        label: 'Fecha entrada HASTA',
-                        value: _date(_creationDateEnd),
-                        onTap: () =>
-                            _pickDate(appointmentDate: false, isEnd: true),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _ReferenceDateField(
-                        label: 'Fecha cita DESDE',
+                        label: 'Desde',
                         value: _date(_appointmentDateStart),
                         onTap: () =>
                             _pickDate(appointmentDate: true, isEnd: false),
@@ -490,7 +490,7 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: _ReferenceDateField(
-                        label: 'Fecha cita HASTA',
+                        label: 'Hasta',
                         value: _date(_appointmentDateEnd),
                         onTap: () =>
                             _pickDate(appointmentDate: true, isEnd: true),
@@ -502,28 +502,59 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
                 Row(
                   children: [
                     Expanded(
-                      child: FilledButton.icon(
-                        onPressed: _loading
-                            ? null
-                            : () {
-                                setState(() => _filtersOpen = false);
-                                _load(announceFiltering: true);
-                              },
-                        icon: const Icon(Icons.filter_alt),
-                        label: const Text('Filtrar'),
-                        style: const ButtonStyle(
-                          backgroundColor: WidgetStatePropertyAll(
-                            Color(0xFF009FA4),
+                      child: SizedBox(
+                        height: 42,
+                        child: FilledButton.icon(
+                          onPressed: _loading
+                              ? null
+                              : () {
+                                  setState(() => _filtersOpen = false);
+                                  _load(announceFiltering: true);
+                                },
+                          icon: const Icon(Icons.search_rounded, size: 24),
+                          label: const Text('Filtrar'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF009FA4),
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: const Color(0xFF009FA4),
+                            disabledForegroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                          foregroundColor: WidgetStatePropertyAll(Colors.white),
                         ),
                       ),
                     ),
                     const SizedBox(width: 10),
-                    OutlinedButton.icon(
-                      onPressed: _loading ? null : _clear,
-                      icon: const Icon(Icons.restart_alt),
-                      label: const Text('Limpiar'),
+                    SizedBox(
+                      height: 42,
+                      child: OutlinedButton.icon(
+                        style: const ButtonStyle(
+                          foregroundColor: WidgetStatePropertyAll(
+                            Color(0xFF009FA4),
+                          ),
+                          side: WidgetStatePropertyAll(
+                            BorderSide(color: Color(0xFF009FA4)),
+                          ),
+                          padding: WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(horizontal: 14),
+                          ),
+                          shape: WidgetStatePropertyAll(StadiumBorder()),
+                          textStyle: WidgetStatePropertyAll(
+                            TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        onPressed: _loading ? null : _clear,
+                        icon: const Icon(Icons.restart_alt, size: 18),
+                        label: const Text('Limpiar'),
+                      ),
                     ),
                   ],
                 ),
@@ -595,14 +626,12 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
   );
 
   Widget _pagination(ReferredAppointmentsResult data) => Container(
-    color: Colors.white,
+    color: const Color(0xFF24364B),
     child: SafeArea(
       top: false,
+      bottom: false,
       child: Container(
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: Color(0xFFE4EAF4))),
-        ),
-        padding: const EdgeInsets.fromLTRB(20, 5, 12, 5),
+        padding: const EdgeInsets.fromLTRB(20, 0, 12, 0),
         child: Row(
           children: [
             Expanded(
@@ -613,24 +642,30 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
                   visible: data.appointments.length,
                   total: data.total,
                 ),
-                style: const TextStyle(fontSize: 15, color: Color(0xFF647194)),
+                style: const TextStyle(fontSize: 13, color: Color(0xFFF7FAFF)),
               ),
             ),
             IconButton(
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 36),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
               onPressed: data.page > 1 && !_loading
                   ? () => _load(page: data.page - 1)
                   : null,
-              icon: const Icon(Icons.chevron_left, color: Color(0xFF10264C)),
+              icon: const Icon(Icons.chevron_left, color: Color(0xFFF7FAFF)),
             ),
             Text(
               '${data.page}',
-              style: const TextStyle(color: Color(0xFF10264C)),
+              style: const TextStyle(color: Color(0xFFF7FAFF)),
             ),
             IconButton(
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 36),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
               onPressed: data.hasNext && !_loading
                   ? () => _load(page: data.page + 1)
                   : null,
-              icon: const Icon(Icons.chevron_right, color: Color(0xFF10264C)),
+              icon: const Icon(Icons.chevron_right, color: Color(0xFFF7FAFF)),
             ),
           ],
         ),
@@ -742,6 +777,62 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
   );
 }
 
+class _ReferenceClearableDatePicker extends StatefulWidget {
+  const _ReferenceClearableDatePicker({
+    required this.initialDate,
+    required this.firstDate,
+    required this.lastDate,
+    required this.onClear,
+  });
+  final DateTime initialDate;
+  final DateTime firstDate;
+  final DateTime lastDate;
+  final VoidCallback onClear;
+
+  @override
+  State<_ReferenceClearableDatePicker> createState() =>
+      _ReferenceClearableDatePickerState();
+}
+
+class _ReferenceClearableDatePickerState
+    extends State<_ReferenceClearableDatePicker> {
+  late DateTime _selected = widget.initialDate;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Seleccionar fecha'),
+    contentPadding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+    content: SizedBox(
+      width: 320,
+      height: 330,
+      child: CalendarDatePicker(
+        initialDate: _selected,
+        firstDate: widget.firstDate,
+        lastDate: widget.lastDate,
+        onDateChanged: (value) => setState(() => _selected = value),
+      ),
+    ),
+    actions: [
+      TextButton.icon(
+        onPressed: () {
+          widget.onClear();
+          Navigator.of(context).pop();
+        },
+        icon: const Icon(Icons.clear),
+        label: const Text('Limpiar'),
+      ),
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancelar'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.of(context).pop(_selected),
+        child: const Text('OK'),
+      ),
+    ],
+  );
+}
+
 class _ReferenceDateField extends StatelessWidget {
   const _ReferenceDateField({
     required this.label,
@@ -756,14 +847,6 @@ class _ReferenceDateField extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(
-        label,
-        style: const TextStyle(
-          color: Color(0xFF24364B),
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      const SizedBox(height: 5),
       Material(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
@@ -780,7 +863,7 @@ class _ReferenceDateField extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      value.isEmpty ? 'Seleccionar' : value,
+                      value.isEmpty ? label : value,
                       maxLines: 2,
                       softWrap: true,
                       style: TextStyle(
@@ -927,10 +1010,10 @@ class _AppointmentCardState extends State<_AppointmentCard> {
 
   String get _displayStatus {
     return switch (appointment.attendance) {
-      'yes' => 'Asistió',
+      'yes' => 'Sí asistió',
       'no' => 'No asistió',
       _ => switch (appointment.status) {
-        'cancel' => 'Cancelado',
+        'cancel' => 'Cancelada',
         'ok' => 'Confirmada',
         'rescheduling' => 'Reprogramando',
         _ => 'Pendiente',
@@ -1024,25 +1107,28 @@ class _AppointmentCardState extends State<_AppointmentCard> {
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 9,
+                    horizontal: 7,
+                    vertical: 4,
                   ),
                   decoration: BoxDecoration(
                     color: _statusBackground,
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
                     _displayStatus,
                     style: TextStyle(
                       color: _statusColor,
+                      fontSize: 7,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
                 const SizedBox(width: 10),
-                const Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  size: 18,
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  size: 24,
                   color: Color(0xFF647194),
                 ),
               ],
@@ -1054,36 +1140,21 @@ class _AppointmentCardState extends State<_AppointmentCard> {
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             _InfoLine(label: 'Clínica', value: appointment.clinic),
-            if (_expanded && appointment.location.isNotEmpty)
-              _InfoLine(
-                label: 'Ubicación',
-                value: appointment.location,
-                icon: Icons.location_on_outlined,
-              ),
-            _InfoLine(
-              label: 'Fecha entrada',
-              value: _date(appointment.creationDate),
-            ),
             _InfoLine(
               label: 'Fecha cita',
               value: _date(appointment.appointmentDate),
             ),
-            if (_expanded)
-              Text(
-                '${_statusLabel(appointment.status)} · ${_attendanceLabel(appointment.attendance)}',
-                style: const TextStyle(color: Color(0xFF53645F)),
+            if (appointment.finalPrice case final price?)
+              _InfoLine(
+                label: 'Precio final',
+                value: '${widget.currencySymbol}${_money(price)}',
+                bold: true,
               ),
             if (_expanded) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 11),
                 child: Divider(height: 1, color: Color(0xFFE1ECE9)),
               ),
-              if (appointment.finalPrice case final price?)
-                _InfoLine(
-                  label: 'Precio final',
-                  value: '${widget.currencySymbol}${_money(price)}',
-                  bold: true,
-                ),
               if (appointment.services.isNotEmpty) ...[
                 const Padding(
                   padding: EdgeInsets.only(top: 11, bottom: 8),
@@ -1206,15 +1277,17 @@ class _ReferencesBottomMenu extends StatelessWidget {
         children: [
           Expanded(
             child: _ReferencesMenuItem(
-              label: 'Enviar\nmensaje',
-              asset: 'assets/svg/health-checkup.svg',
-              onPressed: () => Navigator.of(context).pop(),
+              label: 'Inicio',
+              asset: 'assets/svg/Icono-Inactivo-Inicio-Botonera.svg',
+              onPressed: () => Navigator.of(
+                context,
+              ).pushReplacement(appPageRoute(HomePage(session: session))),
             ),
           ),
           const _ReferencesMenuDivider(),
           Expanded(
             child: _ReferencesMenuItem(
-              label: 'Mis enviados',
+              label: 'Enviados',
               asset: 'assets/svg/Icono de enviados - líneas celeste.svg',
               onPressed: () => Navigator.of(context).pushReplacement(
                 appPageRoute(SentMessagesPage(session: session)),
@@ -1224,7 +1297,7 @@ class _ReferencesBottomMenu extends StatelessWidget {
           const _ReferencesMenuDivider(),
           Expanded(
             child: _ReferencesMenuItem(
-              label: 'Mis referencias',
+              label: 'Referencias',
               asset: 'assets/svg/Icono de referencias - líneas celestes.svg',
               selected: true,
               onPressed: () {},
@@ -1233,9 +1306,9 @@ class _ReferencesBottomMenu extends StatelessWidget {
           const _ReferencesMenuDivider(),
           Expanded(
             child: _ReferencesMenuItem(
-              label: 'Invitar a un amigo',
-              asset: 'assets/svg/Icono de invitar amigo - celeste.svg',
-              onPressed: () => _copyInviteLink(context),
+              label: 'Comisiones',
+              asset: 'assets/svg/Icono de comisiones - líneas gris.svg',
+              onPressed: () => showCommissionsComingSoonDialog(context),
             ),
           ),
         ],

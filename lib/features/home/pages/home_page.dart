@@ -17,6 +17,7 @@ import '../../../core/config/app_config.dart';
 import '../../../core/navigation/app_page_route.dart';
 import '../../auth/models/user_session.dart';
 import '../../auth/pages/login_page.dart';
+import '../../auth/pages/edit_profile_page.dart';
 import '../../auth/services/session_store.dart';
 import 'referred_appointments_page.dart';
 import 'sent_messages_page.dart';
@@ -24,6 +25,9 @@ import '../services/message_service.dart';
 import '../services/clinics_preview_service.dart';
 import '../services/home_draft_store.dart';
 import '../services/home_local_data_store.dart';
+import '../widgets/app_bottom_menu.dart';
+import '../widgets/app_notice_dialog.dart';
+import '../widgets/commissions_coming_soon_dialog.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.session});
@@ -34,6 +38,9 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const double _headerHeight = 64;
+
+  late UserSession _session;
   String _inputMode = 'exams';
   final List<_ExamOption> _selectedExams = [];
   final _imagePicker = ImagePicker();
@@ -54,16 +61,24 @@ class _HomePageState extends State<HomePage> {
   String? _clinicsListUrl;
   bool _loadingClinics = false;
   int _clinicsRequestId = 0;
+  String? _displayNameOverride;
 
   @override
   void initState() {
     super.initState();
+    _session = widget.session;
     _cellphone.addListener(_saveDraft);
     _notes.addListener(_saveDraft);
     _audioPlayer.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _isPlayingAudio = false);
     });
     _restoreDraft();
+  }
+
+  @override
+  void didUpdateWidget(covariant HomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _session = widget.session;
   }
 
   @override
@@ -79,14 +94,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _restoreDraft() async {
-    final draft = await HomeDraftStore.load(widget.session);
+    final draft = await HomeDraftStore.load(_session);
     if (!mounted || draft == null) return;
     final exams = draft['exams'];
     final savedAudioPath = draft['audioPath']?.toString();
     final audioPath =
         savedAudioPath == null ||
             savedAudioPath.isEmpty ||
-            !savedAudioPath.toLowerCase().endsWith('.m4a')
+            !savedAudioPath.toLowerCase().endsWith('.ogg')
         ? null
         : await File(savedAudioPath).exists()
         ? savedAudioPath
@@ -127,7 +142,7 @@ class _HomePageState extends State<HomePage> {
     _saveDraft();
   }
 
-  Future<void> _saveDraft() => HomeDraftStore.save(widget.session, {
+  Future<void> _saveDraft() => HomeDraftStore.save(_session, {
     'inputMode': _inputMode,
     'cellphone': _cellphone.text,
     'notes': _notes.text,
@@ -145,33 +160,21 @@ class _HomePageState extends State<HomePage> {
   });
 
   Future<void> _pickOrderPhoto() async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Tomar foto'),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Elegir de galería'),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (source == null) return;
-    final photo = await _imagePicker.pickImage(
-      source: source,
-      imageQuality: 85,
-    );
-    if (photo != null && mounted) {
-      setState(() => _orderPhoto = photo);
-      _saveDraft();
+    try {
+      final photo = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+      );
+      if (photo != null && mounted) {
+        setState(() => _orderPhoto = photo);
+        _saveDraft();
+      }
+    } on Exception {
+      if (mounted) {
+        _showMessage(
+          'No fue posible abrir la cámara. Revisa el permiso de cámara e inténtalo nuevamente.',
+        );
+      }
     }
   }
 
@@ -198,9 +201,9 @@ class _HomePageState extends State<HomePage> {
     }
     final directory = await getApplicationDocumentsDirectory();
     await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc),
+      const RecordConfig(encoder: AudioEncoder.opus),
       path:
-          '${directory.path}/nota-${DateTime.now().millisecondsSinceEpoch}.m4a',
+          '${directory.path}/nota-${DateTime.now().millisecondsSinceEpoch}.ogg',
     );
     if (mounted) setState(() => _isRecording = true);
   }
@@ -208,7 +211,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _toggleAudioPreview() async {
     final audioPath = _audioPath;
     if (audioPath == null || _isRecording) return;
-    if (!audioPath.toLowerCase().endsWith('.m4a') ||
+    if (!audioPath.toLowerCase().endsWith('.ogg') ||
         !await File(audioPath).exists()) {
       if (mounted) {
         setState(() => _audioPath = null);
@@ -249,49 +252,214 @@ class _HomePageState extends State<HomePage> {
 
   void _info(String title, String message) {
     if (title.startsWith('Enlace')) {
-      final link = widget.session.inviteLink?.trim() ?? '';
+      final link = _session.inviteLink?.trim() ?? '';
       if (link.isEmpty) {
         _showMessage('No hay un enlace de invitación disponible.');
         return;
       }
       Clipboard.setData(ClipboardData(text: link));
+      _showInviteSuccessDialog();
+      return;
     }
     showDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-        contentPadding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-        actionsPadding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-        title: Row(
+      builder: (dialogContext) {
+        final isCommissions = title.startsWith('Tus comisiones');
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 30),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 350),
+            padding: const EdgeInsets.fromLTRB(26, 26, 26, 22),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 24,
+                  offset: Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 68,
+                  height: 68,
+                  child: isCommissions
+                      ? SvgPicture.asset(
+                          'assets/svg/dollar-symbol-circle-comisiones.svg',
+                        )
+                      : const DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Color(0xFFE5F8F7),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.info_outline_rounded,
+                            color: Color(0xFF009FA4),
+                            size: 34,
+                          ),
+                        ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF10264C),
+                    fontSize: 21,
+                    fontWeight: FontWeight.w800,
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF47D1B6),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    isCommissions ? 'PRÓXIMAMENTE' : 'INFORMACIÓN',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: .4,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF435678),
+                    fontSize: 15,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF24364B),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'ENTENDIDO',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showInviteSuccessDialog() {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 38),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        child: Stack(
           children: [
-            const Icon(Icons.check_circle_rounded, color: Color(0xFF009FA4)),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  color: Color(0xFF10264C),
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 92,
+                    height: 92,
+                    padding: const EdgeInsets.all(6),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFE6F9F7),
+                      shape: BoxShape.circle,
+                    ),
+                    child: SvgPicture.asset(
+                      'assets/svg/check-inicio-envio-exitoso.svg',
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    '¡Enlace copiado!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF10264C),
+                      fontSize: 21,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Tu enlace de invitación está listo para compartir.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF647194),
+                      fontSize: 15,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.check_rounded, size: 22),
+                      label: const Text('ENTENDIDO'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF009FA4),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: .2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 10,
+              right: 10,
+              child: IconButton(
+                tooltip: 'Cerrar',
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                icon: const Icon(Icons.close_rounded),
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  backgroundColor: const Color(0xFFF0F2F6),
+                  foregroundColor: const Color(0xFF647194),
                 ),
               ),
             ),
           ],
         ),
-        content: Text(
-          message,
-          style: const TextStyle(color: Color(0xFF435678), height: 1.35),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF009FA4),
-            ),
-            child: const Text('Cerrar'),
-          ),
-        ],
       ),
     );
   }
@@ -317,7 +485,7 @@ class _HomePageState extends State<HomePage> {
     }
     if (mode == 'list' &&
         plaintext.isNotEmpty &&
-        !widget.session.isChequeandomeAgent) {
+        !_session.isChequeandomeAgent) {
       _showMessage('Solo un agente de Chequeándome puede enviar texto libre.');
       return;
     }
@@ -345,7 +513,7 @@ class _HomePageState extends State<HomePage> {
 
     setState(() => _sending = true);
     final result = await _messageService.send(
-      session: widget.session,
+      session: _session,
       mode: mode,
       patientCellphoneNumber: cellphone,
       serviceIds: hasServices
@@ -356,8 +524,10 @@ class _HomePageState extends State<HomePage> {
     );
     if (!mounted) return;
     setState(() => _sending = false);
-    _showMessage(result.message, success: result.success);
-    if (!result.success) return;
+    if (!result.success) {
+      _showMessage(result.message);
+      return;
+    }
     setState(() {
       _cellphone.clear();
       _selectedExams.clear();
@@ -366,7 +536,8 @@ class _HomePageState extends State<HomePage> {
       _audioPath = null;
     });
     _refreshClinicsPreview();
-    HomeDraftStore.clear(widget.session);
+    HomeDraftStore.clear(_session);
+    _showReferralSuccessDialog();
   }
 
   void _showMessage(String message, {bool success = false}) {
@@ -403,6 +574,88 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _showReferralSuccessDialog() {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SvgPicture.asset(
+                    'assets/svg/check-inicio-envio-exitoso.svg',
+                    width: 84,
+                    height: 84,
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    '¡Enlace enviado!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF10264C),
+                      fontSize: 27,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Has ayudado a tu paciente a cuidar su salud.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF647194),
+                      fontSize: 15,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.send_rounded, size: 22),
+                      label: const Text('Hacer otra referencia'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF009FA4),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 10,
+              right: 10,
+              child: IconButton(
+                tooltip: 'Cerrar',
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                icon: const Icon(Icons.close_rounded),
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0xFFF0F2F6),
+                  foregroundColor: const Color(0xFF647194),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _refreshClinicsPreview() async {
     final requestId = ++_clinicsRequestId;
     if (_selectedExams.isEmpty) {
@@ -415,7 +668,7 @@ class _HomePageState extends State<HomePage> {
     }
     setState(() => _loadingClinics = true);
     final preview = await _clinicsPreviewService.fetch(
-      session: widget.session,
+      session: _session,
       serviceIds: _selectedExams.map((exam) => exam.id).toList(),
     );
     if (!mounted || requestId != _clinicsRequestId) return;
@@ -435,15 +688,29 @@ class _HomePageState extends State<HomePage> {
   }
 
   String get _displayName {
-    final fullName = widget.session.fullName?.trim();
+    final updatedName = _displayNameOverride?.trim();
+    if (updatedName != null && updatedName.isNotEmpty) return updatedName;
+    final fullName = _session.fullName?.trim();
     if (fullName == null || fullName.isEmpty) {
-      return widget.session.username;
+      return _session.username;
     }
     return fullName;
   }
 
+  Future<void> _editProfile() async {
+    final updated = await Navigator.of(context).push<UserSession>(
+      MaterialPageRoute(builder: (_) => EditProfilePage(session: _session)),
+    );
+    if (updated != null && mounted) {
+      setState(() {
+        _session = updated;
+        _displayNameOverride = updated.fullName;
+      });
+    }
+  }
+
   Future<void> _logout() async {
-    await HomeLocalDataStore.clearFor(widget.session);
+    await HomeLocalDataStore.clearFor(_session);
     await SessionStore.clear();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -451,6 +718,8 @@ class _HomePageState extends State<HomePage> {
       (_) => false,
     );
   }
+
+  void _showCommissionsComingSoon() => showCommissionsComingSoonDialog(context);
 
   void _selectInputMode(String mode) {
     final nextMode = _inputMode == mode ? 'exams' : mode;
@@ -474,83 +743,117 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _fixedHeader() => Container(
+    height: _headerHeight,
     color: Colors.white,
-    padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    padding: const EdgeInsets.only(left: 20, right: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'assets/logo/Icono_180px_transparente.png',
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.contain,
+                  semanticLabel: 'Chequea',
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Chequea',
+                  style: TextStyle(
+                    color: Color(0xFF10264C),
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
         Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE5F8F7),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.monitor_heart_rounded,
-                      color: Color(0xFF009FA4),
-                      size: 27,
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  const Text(
-                    'Chequea',
-                    style: TextStyle(
-                      color: Color(0xFF10264C),
-                      fontSize: 27,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -.8,
-                    ),
-                  ),
-                ],
+            IconButton(
+              tooltip: 'Invitar a un amigo',
+              onPressed: () => _info(
+                'Enlace copiado',
+                'El enlace de invitación está listo para compartir.',
+              ),
+              icon: SvgPicture.asset(
+                'assets/svg/add-friend-svgrepo-com.svg',
+                width: 22,
+                height: 22,
               ),
             ),
-            _countrySelector(),
+            const HeaderNoticeActions(),
           ],
         ),
-        const SizedBox(height: 14),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(16, 16, 12, 16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF0FAFF),
-            borderRadius: BorderRadius.circular(18),
-          ),
+      ],
+    ),
+  );
+
+  Widget _profileCard() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.fromLTRB(16, 16, 12, 16),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF0FAFF),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: Row(
+      children: [
+        ClipOval(
+          child: SizedBox(width: 68, height: 68, child: _profileImage()),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
           child: Row(
             children: [
-              ClipOval(
-                child: Image.asset(
-                  'assets/images/Perfil doctores.png',
-                  width: 68,
-                  height: 68,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              const SizedBox(width: 14),
               Expanded(
-                child: Text(
-                  _displayName,
-                  maxLines: 2,
-                  softWrap: true,
-                  style: const TextStyle(
-                    color: Color(0xFF10264C),
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800,
-                  ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF10264C),
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if ((_session.specialtyTitle ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        _session.specialtyTitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF647194),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              IconButton(
-                tooltip: 'Cerrar sesión',
-                onPressed: _logout,
-                icon: const Icon(Icons.logout_outlined, size: 29),
-                color: const Color(0xFF24364B),
+              TextButton(
+                onPressed: _editProfile,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF009FA4),
+                  padding: const EdgeInsets.only(left: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Icon(Icons.edit_outlined, size: 20),
               ),
             ],
           ),
@@ -558,6 +861,28 @@ class _HomePageState extends State<HomePage> {
       ],
     ),
   );
+
+  Widget _profileImage() {
+    final photoPath = _session.doctorPhotoPath?.trim() ?? '';
+    if (photoPath.startsWith('http://') || photoPath.startsWith('https://')) {
+      return Image.network(
+        photoPath,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _profilePlaceholder(),
+      );
+    }
+    if (photoPath.isNotEmpty && File(photoPath).existsSync()) {
+      return Image.file(
+        File(photoPath),
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _profilePlaceholder(),
+      );
+    }
+    return _profilePlaceholder();
+  }
+
+  Widget _profilePlaceholder() =>
+      Image.asset('assets/images/Perfil doctores.png', fit: BoxFit.cover);
 
   Widget _countrySelector() => Container(
     padding: const EdgeInsets.fromLTRB(11, 8, 8, 8),
@@ -595,7 +920,7 @@ class _HomePageState extends State<HomePage> {
       child: Stack(
         children: [
           Positioned.fill(
-            top: 166,
+            top: _headerHeight,
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 405),
@@ -607,352 +932,354 @@ class _HomePageState extends State<HomePage> {
                       constraints: BoxConstraints(
                         minHeight: constraints.maxHeight,
                       ),
-                      child: IntrinsicHeight(
-                        child: Transform.translate(
-                          offset: Offset.zero,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Offstage(
-                                offstage: true,
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Container(
-                                            width: 42,
-                                            height: 42,
-                                            decoration: const BoxDecoration(
-                                              color: Color(0xFFE5F8F7),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: const Icon(
-                                              Icons.monitor_heart_rounded,
-                                              color: Color(0xFF009FA4),
-                                              size: 27,
-                                            ),
+                      child: Transform.translate(
+                        offset: Offset.zero,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Offstage(
+                              offstage: true,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          width: 42,
+                                          height: 42,
+                                          decoration: const BoxDecoration(
+                                            color: Color(0xFFE5F8F7),
+                                            shape: BoxShape.circle,
                                           ),
-                                          const SizedBox(width: 9),
-                                          const Text(
-                                            'Chequea',
-                                            style: TextStyle(
-                                              color: Color(0xFF10264C),
-                                              fontSize: 27,
-                                              fontWeight: FontWeight.w800,
-                                              letterSpacing: -.8,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Container(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        11,
-                                        8,
-                                        8,
-                                        8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFE8F8F6),
-                                        border: Border.all(
-                                          color: const Color(0xFFCBECE8),
-                                        ),
-                                        borderRadius: BorderRadius.circular(24),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Text(
-                                            AppConfig.countries
-                                                .firstWhere(
-                                                  (item) =>
-                                                      item.name ==
-                                                      widget.session.country,
-                                                )
-                                                .flag,
-                                            style: const TextStyle(
-                                              fontSize: 15,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 5),
-                                          Text(
-                                            widget.session.country,
-                                            style: const TextStyle(
-                                              color: Color(0xFF24364B),
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 2),
-                                          const Icon(
-                                            Icons.keyboard_arrow_down_rounded,
+                                          child: const Icon(
+                                            Icons.monitor_heart_rounded,
                                             color: Color(0xFF009FA4),
-                                            size: 18,
+                                            size: 27,
                                           ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              Offstage(
-                                offstage: true,
-                                child: Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.fromLTRB(
-                                    16,
-                                    16,
-                                    12,
-                                    16,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF0FAFF),
-                                    borderRadius: BorderRadius.circular(18),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      ClipOval(
-                                        child: Image.asset(
-                                          'assets/images/Perfil doctores.png',
-                                          width: 68,
-                                          height: 68,
-                                          fit: BoxFit.cover,
                                         ),
-                                      ),
-                                      const SizedBox(width: 14),
-                                      Expanded(
-                                        child: Text(
-                                          _displayName,
-                                          maxLines: 2,
-                                          softWrap: true,
-                                          style: const TextStyle(
+                                        const SizedBox(width: 9),
+                                        const Text(
+                                          'Chequea',
+                                          style: TextStyle(
                                             color: Color(0xFF10264C),
-                                            fontSize: 19,
+                                            fontSize: 27,
                                             fontWeight: FontWeight.w800,
+                                            letterSpacing: -.8,
                                           ),
                                         ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      11,
+                                      8,
+                                      8,
+                                      8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE8F8F6),
+                                      border: Border.all(
+                                        color: const Color(0xFFCBECE8),
                                       ),
-                                      IconButton(
-                                        tooltip: 'Cerrar sesión',
-                                        onPressed: _logout,
-                                        icon: const Icon(
-                                          Icons.logout_outlined,
-                                          size: 19,
+                                      borderRadius: BorderRadius.circular(24),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          AppConfig.countries
+                                              .firstWhere(
+                                                (item) =>
+                                                    item.name ==
+                                                    widget.session.country,
+                                              )
+                                              .flag,
+                                          style: const TextStyle(fontSize: 15),
                                         ),
-                                        color: const Color(0xFF24364B),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              TextField(
-                                controller: _cellphone,
-                                style: const TextStyle(
-                                  color: Color(0xFF1A1A1A),
-                                  fontSize: 14,
-                                ),
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                decoration: InputDecoration(
-                                  hintText: 'Número de WhatsApp del paciente',
-                                  hintStyle: const TextStyle(fontSize: 14),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                  prefixIcon: Padding(
-                                    padding: const EdgeInsets.all(11),
-                                    child: SvgPicture.asset(
-                                      'assets/svg/whatsapp.svg',
-                                      colorFilter: const ColorFilter.mode(
-                                        Color(0xFF25D366),
-                                        BlendMode.srcIn,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              if (_orderPhoto != null ||
-                                  _audioPath != null ||
-                                  _isRecording)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Text(
-                                      _isRecording
-                                          ? 'Grabando nota de voz… toque “Grabar nota” para detener.'
-                                          : _orderPhoto != null
-                                          ? 'Orden médica adjunta.'
-                                          : 'Nota de voz adjunta.',
-                                      style: const TextStyle(
-                                        color: Color(0xFF24364B),
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              const SizedBox(height: 6),
-                              if (_inputMode == 'exams') ...[
-                                _ExamSelector(
-                                  session: widget.session,
-                                  onSelected: _addExam,
-                                  onSearchActivity: (isSearching) => setState(
-                                    () => _isSearchingExams = isSearching,
-                                  ),
-                                ),
-                                const SizedBox(height: 14),
-                                if (_selectedExams.isNotEmpty)
-                                  _SelectedExamsSummary(
-                                    exams: _selectedExams,
-                                    totalClinics: _totalClinics,
-                                    isLoading: _loadingClinics,
-                                    onRemove: _removeExam,
-                                    onClear: _clearExams,
-                                    onShowClinics:
-                                        widget.session.isChequeandomeAgent &&
-                                            _clinicsListUrl != null &&
-                                            (_totalClinics ?? 0) > 0
-                                        ? _openClinicsPreview
-                                        : null,
-                                  )
-                                else if (widget.session.isChequeandomeAgent &&
-                                    !_isSearchingExams) ...[
-                                  TextField(
-                                    controller: _notes,
-                                    maxLines: 4,
-                                    maxLength: 1000,
-                                    style: const TextStyle(
-                                      color: Color(0xFF1A1A1A),
-                                    ),
-                                    decoration: const InputDecoration(
-                                      fillColor: Colors.white,
-                                      hintText:
-                                          'En esta caja de texto puede escribir exámenes que no tenga Chequeándome. Máximo 1000 caracteres.',
-                                    ),
-                                  ),
-                                  const Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Text(
-                                      'Si elije uno o más exámenes no podrá utilizar esta caja de texto.',
-                                      style: TextStyle(
-                                        color: Color(0xFF24364B),
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          widget.session.country,
+                                          style: const TextStyle(
+                                            color: Color(0xFF24364B),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 2),
+                                        const Icon(
+                                          Icons.keyboard_arrow_down_rounded,
+                                          color: Color(0xFF009FA4),
+                                          size: 18,
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ],
-                              ],
-                              if (_inputMode == 'photo')
-                                _AttachmentPane(
-                                  title: 'Adjunte imagen:',
-                                  attachmentLabel: _orderPhoto == null
-                                      ? null
-                                      : 'Imagen adjunta.',
-                                  primaryLabel: 'Desde archivos',
-                                  primaryIcon: Icons.attach_file,
-                                  onPrimary: _pickImageFile,
-                                  secondaryLabel: 'Tomar foto',
-                                  secondaryIcon: Icons.camera_alt,
-                                  onSecondary: _pickOrderPhoto,
-                                ),
-                              if (_inputMode == 'voice')
-                                _AttachmentPane(
-                                  title: 'Adjunte nota de voz:',
-                                  previewLabel:
-                                      _audioPath == null || _isRecording
-                                      ? null
-                                      : _isPlayingAudio
-                                      ? 'Pausar nota de voz'
-                                      : 'Escuchar nota de voz',
-                                  previewIcon: _isPlayingAudio
-                                      ? Icons.pause_circle_outline
-                                      : Icons.play_circle_outline,
-                                  onPreview: _audioPath == null || _isRecording
-                                      ? null
-                                      : _toggleAudioPreview,
-                                  attachmentLabel: _isRecording
-                                      ? 'Grabando… toque “Detener grabación” al terminar.'
-                                      : _audioPath == null
-                                      ? null
-                                      : 'Nota de voz adjunta.',
-                                  secondaryLabel: _isRecording
-                                      ? 'Detener grabación'
-                                      : 'Grabar nota',
-                                  secondaryIcon: _isRecording
-                                      ? Icons.stop_circle
-                                      : Icons.mic,
-                                  onSecondary: _toggleVoiceNote,
-                                ),
-                              const SizedBox(height: 28),
-                              SizedBox(
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            Offstage(
+                              offstage: true,
+                              child: Container(
                                 width: double.infinity,
-                                child: FilledButton.icon(
-                                  onPressed: _sending ? null : _sendMessage,
-                                  icon: _sending
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.send_rounded,
-                                          size: 22,
-                                        ),
-                                  label: Text(
-                                    _sending ? 'ENVIANDO…' : 'ENVIAR',
-                                    style: const TextStyle(
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: .3,
-                                    ),
-                                  ),
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: const Color(0xFF009FA4),
-                                  ),
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  16,
+                                  12,
+                                  16,
                                 ),
-                              ),
-                              const SizedBox(height: 50),
-                              _InputModeSelector(
-                                selectedMode: _inputMode,
-                                onSelected: _selectInputMode,
-                              ),
-                              const SizedBox(height: 8),
-                              Center(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF0FAFF),
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
                                 child: Row(
-                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Image.asset(
-                                      'assets/images/Tres estrellas.png',
-                                      width: 26,
-                                      height: 26,
-                                    ),
-                                    const SizedBox(width: 7),
-                                    const Text(
-                                      'Impulsado por Inteligencia Artificial',
-                                      style: TextStyle(
-                                        color: Color(0xFF647194),
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
+                                    ClipOval(
+                                      child: Image.asset(
+                                        'assets/images/Perfil doctores.png',
+                                        width: 68,
+                                        height: 68,
+                                        fit: BoxFit.cover,
                                       ),
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Text(
+                                        _displayName,
+                                        maxLines: 2,
+                                        softWrap: true,
+                                        style: const TextStyle(
+                                          color: Color(0xFF10264C),
+                                          fontSize: 19,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Cerrar sesión',
+                                      onPressed: _logout,
+                                      icon: const Icon(
+                                        Icons.logout_outlined,
+                                        size: 19,
+                                      ),
+                                      color: const Color(0xFF24364B),
                                     ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 46),
+                            ),
+                            const SizedBox(height: 10),
+                            _profileCard(),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _cellphone,
+                              style: const TextStyle(
+                                color: Color(0xFF1A1A1A),
+                                fontSize: 14,
+                              ),
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              decoration: InputDecoration(
+                                hintText: 'Número de WhatsApp del paciente',
+                                hintStyle: const TextStyle(fontSize: 14),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                prefixIcon: Padding(
+                                  padding: const EdgeInsets.all(11),
+                                  child: SvgPicture.asset(
+                                    'assets/svg/whatsapp.svg',
+                                    colorFilter: const ColorFilter.mode(
+                                      Color(0xFF25D366),
+                                      BlendMode.srcIn,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            if (_orderPhoto != null ||
+                                _audioPath != null ||
+                                _isRecording)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    _isRecording
+                                        ? 'Grabando nota de voz… toque “Grabar nota” para detener.'
+                                        : _orderPhoto != null
+                                        ? 'Orden médica adjunta.'
+                                        : 'Nota de voz adjunta.',
+                                    style: const TextStyle(
+                                      color: Color(0xFF24364B),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 6),
+                            if (_inputMode == 'exams') ...[
+                              _ExamSelector(
+                                session: _session,
+                                onSelected: _addExam,
+                                onSearchActivity: (isSearching) => setState(
+                                  () => _isSearchingExams = isSearching,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              if (_selectedExams.isNotEmpty)
+                                _SelectedExamsSummary(
+                                  exams: _selectedExams,
+                                  totalClinics: _totalClinics,
+                                  isLoading: _loadingClinics,
+                                  onRemove: _removeExam,
+                                  onClear: _clearExams,
+                                  onShowClinics:
+                                      _session.isChequeandomeAgent &&
+                                          _clinicsListUrl != null &&
+                                          (_totalClinics ?? 0) > 0
+                                      ? _openClinicsPreview
+                                      : null,
+                                )
+                              else if (_session.isChequeandomeAgent &&
+                                  !_isSearchingExams) ...[
+                                TextField(
+                                  controller: _notes,
+                                  maxLines: 4,
+                                  maxLength: 1000,
+                                  style: const TextStyle(
+                                    color: Color(0xFF1A1A1A),
+                                  ),
+                                  decoration: const InputDecoration(
+                                    fillColor: Colors.white,
+                                    hintText:
+                                        'En esta caja de texto puede escribir exámenes que no tenga Chequeándome. Máximo 1000 caracteres.',
+                                  ),
+                                ),
+                                const Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Si elije uno o más exámenes no podrá utilizar esta caja de texto.',
+                                    style: TextStyle(
+                                      color: Color(0xFF24364B),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
-                          ),
+                            if (_inputMode == 'photo')
+                              _AttachmentPane(
+                                title: 'Adjunte imagen:',
+                                attachmentLabel: _orderPhoto == null
+                                    ? null
+                                    : 'Imagen adjunta.',
+                                primaryLabel: 'Desde archivos',
+                                primaryIcon: Icons.attach_file,
+                                onPrimary: _pickImageFile,
+                                secondaryLabel: 'Tomar foto',
+                                secondaryIcon: Icons.camera_alt,
+                                onSecondary: _pickOrderPhoto,
+                              ),
+                            if (_inputMode == 'voice')
+                              _AttachmentPane(
+                                title: 'Adjunte nota de voz:',
+                                previewLabel: _audioPath == null || _isRecording
+                                    ? null
+                                    : _isPlayingAudio
+                                    ? 'Pausar nota de voz'
+                                    : 'Escuchar nota de voz',
+                                previewIcon: _isPlayingAudio
+                                    ? Icons.pause_circle_outline
+                                    : Icons.play_circle_outline,
+                                onPreview: _audioPath == null || _isRecording
+                                    ? null
+                                    : _toggleAudioPreview,
+                                attachmentLabel: _isRecording
+                                    ? 'Grabando… toque “Detener grabación” al terminar.'
+                                    : _audioPath == null
+                                    ? null
+                                    : 'Nota de voz adjunta.',
+                                secondaryLabel: _isRecording
+                                    ? 'Detener grabación'
+                                    : 'Grabar nota de voz',
+                                secondaryIcon: _isRecording
+                                    ? Icons.stop_circle
+                                    : Icons.mic,
+                                onSecondary: _toggleVoiceNote,
+                              ),
+                            const SizedBox(height: 28),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: _sending ? null : _sendMessage,
+                                icon: _sending
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : SvgPicture.asset(
+                                        'assets/svg/Icono de enviados - líneas celeste.svg',
+                                        width: 22,
+                                        height: 22,
+                                        colorFilter: const ColorFilter.mode(
+                                          Colors.white,
+                                          BlendMode.srcIn,
+                                        ),
+                                      ),
+                                label: Text(
+                                  _sending ? 'ENVIANDO…' : 'ENVIAR',
+                                  style: const TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: .3,
+                                  ),
+                                ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFF009FA4),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 50),
+                            _InputModeSelector(
+                              selectedMode: _inputMode,
+                              onSelected: _selectInputMode,
+                            ),
+                            const SizedBox(height: 28),
+                            Center(
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Image.asset(
+                                    'assets/images/Tres estrellas.png',
+                                    width: 26,
+                                    height: 26,
+                                  ),
+                                  const SizedBox(width: 7),
+                                  const Text(
+                                    'Impulsado por Inteligencia Artificial',
+                                    style: TextStyle(
+                                      color: Color(0xFF647194),
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 46),
+                          ],
                         ),
                       ),
                     ),
@@ -971,105 +1298,20 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     ),
-    bottomNavigationBar: Container(
-      color: Colors.white,
-      child: SafeArea(
-        top: false,
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: Color(0xFFD5DEF0))),
-          ),
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(0, 10, 0, 14),
-          child: Row(
-            children: [
-              Expanded(
-                child: _Action(
-                  label: 'Enviar\nmensaje',
-                  selected: true,
-                  icon: SvgPicture.asset(
-                    'assets/svg/health-checkup.svg',
-                    width: 25,
-                    height: 25,
-                    colorFilter: const ColorFilter.mode(
-                      Color(0xFF009FA4),
-                      BlendMode.srcIn,
-                    ),
-                  ),
-                  onPressed: () => _homeScrollController.animateTo(
-                    0,
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
-                  ),
-                ),
-              ),
-              const SizedBox(
-                height: 42,
-                child: VerticalDivider(color: Color(0xFFD5DEF0)),
-              ),
-              Expanded(
-                child: _Action(
-                  label: 'Mis enviados',
-                  icon: SvgPicture.asset(
-                    'assets/svg/Icono de enviados - líneas celeste.svg',
-                    width: 29,
-                    height: 29,
-                    colorFilter: const ColorFilter.mode(
-                      Color(0xFF10264C),
-                      BlendMode.srcIn,
-                    ),
-                  ),
-                  onPressed: () => Navigator.of(context).push(
-                    appPageRoute(SentMessagesPage(session: widget.session)),
-                  ),
-                ),
-              ),
-              const SizedBox(
-                height: 42,
-                child: VerticalDivider(color: Color(0xFFD5DEF0)),
-              ),
-              Expanded(
-                child: _Action(
-                  label: 'Mis referencias',
-                  icon: SvgPicture.asset(
-                    'assets/svg/Icono de referencias - líneas celestes.svg',
-                    width: 29,
-                    height: 29,
-                    colorFilter: const ColorFilter.mode(
-                      Color(0xFF10264C),
-                      BlendMode.srcIn,
-                    ),
-                  ),
-                  onPressed: () => Navigator.of(context).push(
-                    appPageRoute(
-                      ReferredAppointmentsPage(session: widget.session),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(
-                height: 42,
-                child: VerticalDivider(color: Color(0xFFD5DEF0)),
-              ),
-              Expanded(
-                child: _Action(
-                  label: 'Invitar a un amigo',
-                  icon: SvgPicture.asset(
-                    'assets/svg/Icono de invitar amigo - celeste.svg',
-                    width: 29,
-                    height: 29,
-                  ),
-                  onPressed: () => _info(
-                    'Enlace copiado',
-                    'El enlace de invitación está listo para compartir.',
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+    bottomNavigationBar: AppBottomMenu(
+      selected: AppBottomMenuSection.home,
+      onHome: () => _homeScrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
       ),
+      onSent: () => Navigator.of(
+        context,
+      ).pushReplacement(appPageRoute(SentMessagesPage(session: _session))),
+      onReferences: () => Navigator.of(context).pushReplacement(
+        appPageRoute(ReferredAppointmentsPage(session: _session)),
+      ),
+      onCommissions: _showCommissionsComingSoon,
     ),
   );
 
@@ -1078,6 +1320,7 @@ class _HomePageState extends State<HomePage> {
       (selected) => selected.title.toLowerCase() == exam.title.toLowerCase(),
     );
     if (exists) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _selectedExams.add(exam);
       _notes.clear();
@@ -1101,43 +1344,6 @@ class _HomePageState extends State<HomePage> {
     _saveDraft();
     _scrollHomeToTop();
   }
-}
-
-class _Action extends StatelessWidget {
-  const _Action({
-    required this.label,
-    required this.icon,
-    required this.onPressed,
-    this.selected = false,
-  });
-  final String label;
-  final Widget icon;
-  final VoidCallback onPressed;
-  final bool selected;
-  @override
-  Widget build(BuildContext context) => TextButton(
-    onPressed: onPressed,
-    style: TextButton.styleFrom(
-      foregroundColor: selected
-          ? const Color(0xFF009FA4)
-          : const Color(0xFF10264C),
-      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(width: 29, height: 29, child: Center(child: icon)),
-        const SizedBox(height: 5),
-        Text(
-          label,
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-        ),
-      ],
-    ),
-  );
 }
 
 class _ExamSelector extends StatefulWidget {
@@ -1325,7 +1531,7 @@ class _SelectedExamsSummary extends StatelessWidget {
                   child: Text(
                     totalClinics == 0
                         ? 'No hay clínicas disponibles para esta combinación.'
-                        : '${totalClinics ?? 0} ${(totalClinics ?? 0) == 1 ? 'clínica disponible' : 'clínicas disponibles'} para esta combinación.',
+                        : '${totalClinics ?? 0} clínicas disponibles',
                     style: const TextStyle(
                       color: Color(0xFF647194),
                       fontSize: 13,
@@ -1408,60 +1614,48 @@ class _InputModeSelector extends StatelessWidget {
   final ValueChanged<String> onSelected;
 
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      if (selectedMode == 'photo' || selectedMode == 'voice') ...[
-        SizedBox(
-          width: double.infinity,
-          height: 41,
-          child: OutlinedButton.icon(
+  Widget build(BuildContext context) => SizedBox(
+    height: 84,
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: _SecondaryModeAction(
+            icon: Icons.format_list_bulleted_rounded,
+            label: 'Seleccionar exámenes',
+            selected: selectedMode == 'exams',
+            enabled: true,
             onPressed: () => onSelected('exams'),
-            icon: const Icon(Icons.format_list_bulleted_rounded, size: 16),
-            label: const Text('Lista de exámenes'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFF10264C),
-              side: const BorderSide(color: Color(0xFF009FA4)),
-              padding: EdgeInsets.zero,
-              textStyle: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
           ),
         ),
-        const SizedBox(height: 14),
-      ],
-      SizedBox(
-        height: 86,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: _SecondaryModeAction(
-                icon: Icons.camera_alt_outlined,
-                label: 'Orden médica',
-                selected: selectedMode == 'photo',
-                enabled: true,
-                onPressed: () => onSelected('photo'),
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: VerticalDivider(color: Color(0xFFD5DEF0)),
-            ),
-            Expanded(
-              child: _SecondaryModeAction(
-                icon: Icons.keyboard_voice_rounded,
-                label: 'Nota de voz',
-                selected: selectedMode == 'voice',
-                enabled: true,
-                onPressed: () => onSelected('voice'),
-              ),
-            ),
-          ],
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: VerticalDivider(color: Color(0xFFD5DEF0)),
         ),
-      ),
-    ],
+        Expanded(
+          child: _SecondaryModeAction(
+            icon: Icons.camera_alt_outlined,
+            label: 'Orden médica',
+            selected: selectedMode == 'photo',
+            enabled: true,
+            onPressed: () => onSelected('photo'),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: VerticalDivider(color: Color(0xFFD5DEF0)),
+        ),
+        Expanded(
+          child: _SecondaryModeAction(
+            icon: Icons.keyboard_voice_rounded,
+            label: 'Nota de voz',
+            selected: selectedMode == 'voice',
+            enabled: true,
+            onPressed: () => onSelected('voice'),
+          ),
+        ),
+      ],
+    ),
   );
 }
 
@@ -1498,7 +1692,6 @@ class _AttachmentPane extends StatelessWidget {
     decoration: BoxDecoration(
       color: Colors.white,
       borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: const Color(0xFFD5DEF0)),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1524,7 +1717,7 @@ class _AttachmentPane extends StatelessWidget {
         ],
         SizedBox(
           width: double.infinity,
-          child: FilledButton.icon(
+          child: OutlinedButton.icon(
             onPressed: onSecondary,
             icon: Icon(secondaryIcon),
             label: Text(secondaryLabel),
@@ -1587,11 +1780,13 @@ class _SecondaryModeAction extends StatelessWidget {
     child: Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(icon, size: 32),
+        Icon(icon, size: 27),
         const SizedBox(height: 6),
         Text(
           label,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          maxLines: 2,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          textAlign: TextAlign.center,
         ),
       ],
     ),
@@ -1607,7 +1802,21 @@ class _ExamSelectorState extends State<_ExamSelector> {
   List<_ExamOption> _results = const [];
 
   @override
+  void initState() {
+    super.initState();
+    _searchFocus.addListener(_collapseWhenUnfocused);
+  }
+
+  void _collapseWhenUnfocused() {
+    if (!_searchFocus.hasFocus && mounted && _expanded) {
+      setState(() => _expanded = false);
+      widget.onSearchActivity(false);
+    }
+  }
+
+  @override
   void dispose() {
+    _searchFocus.removeListener(_collapseWhenUnfocused);
     _search.dispose();
     _searchFocus.dispose();
     super.dispose();
@@ -1669,6 +1878,7 @@ class _ExamSelectorState extends State<_ExamSelector> {
     decoration: BoxDecoration(
       color: Colors.white,
       borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: const Color(0xFFD5DEF0)),
     ),
     child: Column(
       mainAxisSize: MainAxisSize.min,
@@ -1695,7 +1905,7 @@ class _ExamSelectorState extends State<_ExamSelector> {
                 const SizedBox(width: 10),
                 const Expanded(
                   child: Text(
-                    'Selecciona un examen',
+                    'Seleccionar exámenes',
                     style: TextStyle(color: Color(0xFF647194), fontSize: 15),
                   ),
                 ),
@@ -1738,7 +1948,7 @@ class _ExamSelectorState extends State<_ExamSelector> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Por favor, introduzca al menos 2 caracteres más',
+                  'Introducir al menos 2 caracteres',
                   style: TextStyle(color: Color(0xFF222222)),
                 ),
               ),
@@ -1768,6 +1978,7 @@ class _ExamSelectorState extends State<_ExamSelector> {
                   style: const TextStyle(color: Color(0xFF333333)),
                 ),
                 onTap: () {
+                  _searchFocus.unfocus();
                   widget.onSelected(exam);
                   widget.onSearchActivity(false);
                   setState(() => _expanded = false);

@@ -49,6 +49,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_native_splash: ^2.4.7
+  flutter_launcher_icons: ^0.14.4
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -75,7 +77,20 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/logo/
     - assets/svg/
+
+flutter_native_splash:
+  color: "#FFFFFF"
+  image: assets/logo/logo_720px_transparente.png
+  android_12:
+    color: "#FFFFFF"
+    image: assets/logo/Icono_180px_transparente.png
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/logo/Icono_720px_fondoblanco.jpg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
