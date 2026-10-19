@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../home/widgets/app_notice_dialog.dart';
+import '../../home/services/home_local_data_store.dart';
 import '../models/user_session.dart';
 import '../services/auth_service.dart';
 import '../services/session_store.dart';
@@ -144,38 +145,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   Future<void> _load() async {
     final loadVersion = _profileLoadVersion;
-    final currentPhotoPath = _photoPath;
-    final hasLocalPhoto =
-        currentPhotoPath != null &&
-        currentPhotoPath.isNotEmpty &&
-        !(Uri.tryParse(currentPhotoPath)?.hasScheme ?? false) &&
-        await File(currentPhotoPath).exists();
-    final results = await Future.wait([
-      _auth.getProfile(widget.session),
-      _auth.getProfileOptions(widget.session),
-    ]);
-    // Do not let an older GET response overwrite a profile just saved locally.
+    final optionsResult = await _auth.getProfileOptions(widget.session);
     if (!mounted || loadVersion != _profileLoadVersion) return;
-    final result = results[0] as ProfileResult;
-    final optionsResult = results[1] as ProfileOptionsResult;
-    if (result.isSuccess) {
-      final loadedSession = result.session;
-      if (loadedSession == null) return;
-      _session = hasLocalPhoto
-          ? _withPhotoPath(loadedSession, currentPhotoPath)
-          : loadedSession;
-      _fullName.text = _session!.fullName ?? '';
-      _email.text = _session!.email ?? '';
-      _cellphone.text = _session!.cellphone ?? '';
-      _photoPath = _session!.doctorPhotoPath;
-      _specialty = _session!.specialty;
-      _specialtyTitle = _session!.specialtyTitle;
-      _bankAccountNumber.text = _session!.bankAccountNumber ?? '';
-      _bankAccountType = _session!.bankAccountType;
-      _bankName = _session!.bankName;
-      _bankAccountHolder.text = _session!.bankAccountHolder ?? '';
-      await SessionStore.save(_session!);
-    }
     if (optionsResult.isSuccess) {
       final options = optionsResult.options!;
       _medicalSpecialties = options.medicalSpecialties;
@@ -273,26 +244,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
     bankAccountHolder: _bankAccountHolder.text.trim(),
   );
 
-  UserSession _withPhotoPath(UserSession session, String photoPath) =>
-      UserSession(
-        username: session.username,
-        country: session.country,
-        isChequeandomeAgent: session.isChequeandomeAgent,
-        refreshToken: session.refreshToken,
-        accessToken: session.accessToken,
-        fullName: session.fullName,
-        email: session.email,
-        cellphone: session.cellphone,
-        inviteLink: session.inviteLink,
-        doctorPhotoPath: photoPath,
-        specialty: session.specialty,
-        specialtyTitle: session.specialtyTitle,
-        bankAccountNumber: session.bankAccountNumber,
-        bankAccountType: session.bankAccountType,
-        bankName: session.bankName,
-        bankAccountHolder: session.bankAccountHolder,
-      );
-
   bool get _isLocalPhoto {
     final photoPath = _photoPath;
     if (photoPath == null || photoPath.isEmpty) return false;
@@ -300,6 +251,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Future<void> _logout() async {
+    final session = _session;
+    if (session != null) await HomeLocalDataStore.clearFor(session);
     await SessionStore.clear();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(

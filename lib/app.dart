@@ -57,14 +57,20 @@ class _ChequeaAppState extends State<ChequeaApp> {
     if (refreshedSession != null) {
       final profile = await authService.getProfile(refreshedSession);
       updatedSession = profile.isSuccess ? profile.session : refreshedSession;
-      await SessionStore.save(updatedSession!);
     } else if (result.invalid) {
+      if (!identical(_session, session)) return;
       await SessionStore.clear();
     }
+    if (!identical(_session, session)) return;
+    if (updatedSession != null) await SessionStore.save(updatedSession);
     if (!mounted) return;
     if (updatedSession != null || result.invalid) {
       setState(() => _session = updatedSession);
     }
+  }
+
+  void _replaceSession(UserSession session) {
+    if (mounted) setState(() => _session = session);
   }
 
   @override
@@ -181,7 +187,10 @@ class _ChequeaAppState extends State<ChequeaApp> {
       );
     },
     home: switch (_session) {
-      final session? => HomePage(session: session),
+      final session? => HomePage(
+        session: session,
+        onSessionUpdated: _replaceSession,
+      ),
       null => const LoginPage(),
     },
   );

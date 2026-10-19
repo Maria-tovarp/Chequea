@@ -1,26 +1,23 @@
-import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class InstallSessionGuard {
   InstallSessionGuard._();
 
-  static const _channel = MethodChannel('chequea/install');
-  static const _markerKey = 'app.install_marker';
+  static const _versionKey = 'app.session_version';
 
-  static Future<bool> isNewInstallation() async {
-    String? marker;
+  static Future<bool> requiresLoginAfterUpdate() async {
+    String? version;
     try {
-      marker = await _channel.invokeMethod<String>('marker');
-    } on PlatformException {
-      return false;
-    } on MissingPluginException {
+      final info = await PackageInfo.fromPlatform();
+      version = '${info.version}+${info.buildNumber}';
+    } on Exception {
       return false;
     }
-    if (marker == null || marker.isEmpty) return false;
+    if (version.isEmpty) return false;
     final preferences = await SharedPreferences.getInstance();
-    final previousMarker = preferences.getString(_markerKey);
-    await preferences.setString(_markerKey, marker);
-    final previousInstallMarker = previousMarker?.split(':').first;
-    return previousInstallMarker != null && previousInstallMarker != marker;
+    final previousVersion = preferences.getString(_versionKey);
+    await preferences.setString(_versionKey, version);
+    return previousVersion != null && previousVersion != version;
   }
 }

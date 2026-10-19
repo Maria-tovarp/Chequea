@@ -30,8 +30,9 @@ import '../widgets/app_notice_dialog.dart';
 import '../widgets/commissions_coming_soon_dialog.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.session});
+  const HomePage({super.key, required this.session, this.onSessionUpdated});
   final UserSession session;
+  final ValueChanged<UserSession>? onSessionUpdated;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -346,7 +347,7 @@ class _HomePageState extends State<HomePage> {
                     height: 1.35,
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
                   height: 44,
@@ -706,6 +707,7 @@ class _HomePageState extends State<HomePage> {
         _session = updated;
         _displayNameOverride = updated.fullName;
       });
+      widget.onSessionUpdated?.call(updated);
       _showMessage('Perfil actualizado correctamente.', success: true);
     }
   }
@@ -1020,7 +1022,7 @@ class _HomePageState extends State<HomePage> {
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 14),
+                            const SizedBox(height: 4),
                             Offstage(
                               offstage: true,
                               child: Container(
@@ -1216,7 +1218,7 @@ class _HomePageState extends State<HomePage> {
                                     : Icons.mic,
                                 onSecondary: _toggleVoiceNote,
                               ),
-                            const SizedBox(height: 28),
+                            SizedBox(height: _inputMode == 'photo' ? 9 : 28),
                             SizedBox(
                               width: double.infinity,
                               child: FilledButton.icon(
@@ -1252,7 +1254,7 @@ class _HomePageState extends State<HomePage> {
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 50),
+                            const SizedBox(height: 34),
                             _InputModeSelector(
                               selectedMode: _inputMode,
                               onSelected: _selectInputMode,

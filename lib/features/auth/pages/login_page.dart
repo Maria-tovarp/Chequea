@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../../../core/config/app_config.dart';
 import '../../home/pages/home_page.dart';
+import '../../home/services/home_local_data_store.dart';
 import '../models/user_session.dart';
 import 'forgot_password_page.dart';
 import 'register_page.dart';
@@ -85,6 +86,7 @@ class _LoginPageState extends State<LoginPage> {
         ? profile.session!
         : _withCachedProfile(loginSession, cachedSession);
     session = await _cacheProfilePhoto(session, cachedSession);
+    await HomeLocalDataStore.clearFor(session);
     await SessionStore.save(session);
     if (!mounted) return;
     setState(() => _loading = false);

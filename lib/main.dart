@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app.dart';
+import 'core/storage/install_session_guard.dart';
 import 'features/auth/services/session_store.dart';
 export 'features/auth/services/auth_service.dart'
     show
@@ -22,6 +23,8 @@ Future<void> main() async {
       statusBarIconBrightness: Brightness.dark,
     ),
   );
-  final session = await SessionStore.load();
+  final requiresLogin = await InstallSessionGuard.requiresLoginAfterUpdate();
+  if (requiresLogin) await SessionStore.clear();
+  final session = requiresLogin ? null : await SessionStore.load();
   runApp(ChequeaApp(initialSession: session, showInitialSplash: true));
 }
