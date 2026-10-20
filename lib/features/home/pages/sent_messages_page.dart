@@ -10,8 +10,8 @@ import '../../auth/services/session_store.dart';
 import 'referred_appointments_page.dart';
 import 'home_page.dart';
 import '../services/sent_messages_service.dart';
-import '../widgets/commissions_coming_soon_dialog.dart';
 import '../widgets/app_notice_dialog.dart';
+import '../widgets/commissions_coming_soon_dialog.dart';
 
 class SentMessagesPage extends StatefulWidget {
   const SentMessagesPage({super.key, required this.session});

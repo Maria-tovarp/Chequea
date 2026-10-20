@@ -512,7 +512,7 @@ UserSession _sessionWithProfile(
       session.cellphone,
   inviteLink: session.inviteLink,
   doctorPhotoPath:
-      profile['profile_picture']?.toString() ??
+      _profilePictureUrl(profile, session) ??
       fallbackProfilePicture ??
       session.doctorPhotoPath,
   specialty:
@@ -541,6 +541,24 @@ UserSession _sessionWithProfile(
       session.bankAccountHolder,
 );
 
+String? _profilePictureUrl(Map<String, dynamic> profile, UserSession session) {
+  const keys = ['profile_picture', 'profile_picture_url', 'avatar'];
+  for (final key in keys) {
+    final value = profile[key];
+    final raw = value is Map
+        ? (value['url'] ?? value['path'])?.toString().trim()
+        : value?.toString().trim();
+    if (raw == null || raw.isEmpty) continue;
+    final uri = Uri.tryParse(raw);
+    if (uri != null && uri.hasScheme) return uri.toString();
+    final origin = Uri.parse(
+      AppConfig.forCountry(session.country).loginUrl,
+    ).origin;
+    return Uri.parse('$origin/').resolve(raw).toString();
+  }
+  return null;
+}
+
 List<ProfileOption> _options(dynamic data, {required String key}) {
   if (data is! List) return const [];
   return data
@@ -556,10 +574,11 @@ List<ProfileOption> _options(dynamic data, {required String key}) {
 
 String? _optionValue(dynamic data) => data is Map
     ? (data['id'] ?? data['value'] ?? data['name'])?.toString()
-    : null;
+    : data?.toString();
 
-String? _optionTitle(dynamic data) =>
-    data is Map ? data['title']?.toString() : null;
+String? _optionTitle(dynamic data) => data is Map
+    ? (data['title'] ?? data['name'] ?? data['label'])?.toString()
+    : data?.toString();
 
 Map<String, dynamic> _payload(http.Response response) {
   try {

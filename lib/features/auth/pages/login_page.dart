@@ -136,8 +136,16 @@ class _LoginPageState extends State<LoginPage> {
         ? cached?.doctorPhotoPath
         : null;
     try {
+      final config = AppConfig.forCountry(session.country);
       final response = await http
-          .get(Uri.parse(photoUrl))
+          .get(
+            Uri.parse(photoUrl),
+            headers: {
+              'Accept': 'image/*',
+              'x-api-key': config.apiKeyFor(session.country),
+              'Authorization': 'Bearer ${session.accessToken}',
+            },
+          )
           .timeout(const Duration(seconds: 12));
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||

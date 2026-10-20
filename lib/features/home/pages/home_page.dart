@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -18,6 +19,7 @@ import '../../../core/navigation/app_page_route.dart';
 import '../../auth/models/user_session.dart';
 import '../../auth/pages/login_page.dart';
 import '../../auth/pages/edit_profile_page.dart';
+import '../../auth/services/auth_service.dart';
 import '../../auth/services/session_store.dart';
 import 'referred_appointments_page.dart';
 import 'sent_messages_page.dart';
@@ -38,8 +40,9 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const double _headerHeight = 64;
+  static const _profileSyncInterval = Duration(seconds: 30);
 
   late UserSession _session;
   String _inputMode = 'exams';
@@ -57,16 +60,20 @@ class _HomePageState extends State<HomePage> {
   bool _sending = false;
   bool _isSearchingExams = false;
   final _messageService = const MessageService();
+  final _authService = const AuthService();
   final _clinicsPreviewService = const ClinicsPreviewService();
   int? _totalClinics;
   String? _clinicsListUrl;
   bool _loadingClinics = false;
   int _clinicsRequestId = 0;
   String? _displayNameOverride;
+  Timer? _profileSyncTimer;
+  bool _syncingProfile = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _session = widget.session;
     _cellphone.addListener(_saveDraft);
     _notes.addListener(_saveDraft);
@@ -74,16 +81,34 @@ class _HomePageState extends State<HomePage> {
       if (mounted) setState(() => _isPlayingAudio = false);
     });
     _restoreDraft();
+    unawaited(_syncProfile());
+    _profileSyncTimer = Timer.periodic(
+      _profileSyncInterval,
+      (_) => _syncProfile(),
+    );
   }
 
   @override
   void didUpdateWidget(covariant HomePage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.session, widget.session)) return;
+    final oldPhotoPath = oldWidget.session.doctorPhotoPath?.trim() ?? '';
+    final newPhotoPath = widget.session.doctorPhotoPath?.trim() ?? '';
+    _evictProfileImage(oldPhotoPath, oldWidget.session);
+    _evictProfileImage(newPhotoPath, widget.session);
     _session = widget.session;
+    _displayNameOverride = widget.session.fullName;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_syncProfile());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _profileSyncTimer?.cancel();
     _cellphone.removeListener(_saveDraft);
     _notes.removeListener(_saveDraft);
     _notes.dispose();
@@ -92,6 +117,31 @@ class _HomePageState extends State<HomePage> {
     _audioRecorder.dispose();
     _audioPlayer.dispose();
     super.dispose();
+  }
+
+  Future<void> _syncProfile() async {
+    if (_syncingProfile) return;
+    final session = _session;
+    _syncingProfile = true;
+    try {
+      final result = await _authService.getProfile(session);
+      if (!mounted || !identical(_session, session) || !result.isSuccess) {
+        return;
+      }
+      final updatedSession = result.session!;
+      _evictProfileImage(
+        updatedSession.doctorPhotoPath?.trim() ?? '',
+        updatedSession,
+      );
+      setState(() {
+        _session = updatedSession;
+        _displayNameOverride = updatedSession.fullName;
+      });
+      await SessionStore.save(updatedSession);
+      widget.onSessionUpdated?.call(updatedSession);
+    } finally {
+      _syncingProfile = false;
+    }
   }
 
   Future<void> _restoreDraft() async {
@@ -740,7 +790,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _showCommissionsComingSoon() => showCommissionsComingSoonDialog(context);
+  void _openCommissions() => showCommissionsComingSoonDialog(context);
 
   void _selectInputMode(String mode) {
     final nextMode = _inputMode == mode ? 'exams' : mode;
@@ -888,6 +938,7 @@ class _HomePageState extends State<HomePage> {
     if (photoPath.startsWith('http://') || photoPath.startsWith('https://')) {
       return Image.network(
         photoPath,
+        headers: _profileImageHeaders(photoPath, _session),
         fit: BoxFit.cover,
         errorBuilder: (_, _, _) => _profilePlaceholder(),
       );
@@ -900,6 +951,29 @@ class _HomePageState extends State<HomePage> {
       );
     }
     return _profilePlaceholder();
+  }
+
+  Map<String, String>? _profileImageHeaders(
+    String photoPath,
+    UserSession session,
+  ) {
+    final photoUri = Uri.tryParse(photoPath);
+    final config = AppConfig.forCountry(session.country);
+    final apiOrigin = Uri.parse(config.loginUrl).origin;
+    if (photoUri == null || photoUri.origin != apiOrigin) return null;
+    return {
+      'Accept': 'image/*',
+      'x-api-key': config.apiKeyFor(session.country),
+      'Authorization': 'Bearer ${session.accessToken}',
+    };
+  }
+
+  void _evictProfileImage(String photoPath, UserSession session) {
+    if (!photoPath.startsWith('http')) return;
+    NetworkImage(
+      photoPath,
+      headers: _profileImageHeaders(photoPath, session),
+    ).evict();
   }
 
   Widget _profilePlaceholder() =>
@@ -1332,7 +1406,7 @@ class _HomePageState extends State<HomePage> {
       onReferences: () => Navigator.of(context).pushReplacement(
         appPageRoute(ReferredAppointmentsPage(session: _session)),
       ),
-      onCommissions: _showCommissionsComingSoon,
+      onCommissions: _openCommissions,
     ),
   );
 

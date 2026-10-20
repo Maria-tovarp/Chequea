@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-enum AppBottomMenuSection { home, sent, references }
+enum AppBottomMenuSection { home, sent, references, commissions }
 
 class AppBottomMenu extends StatelessWidget {
   const AppBottomMenu({
@@ -61,6 +61,7 @@ class AppBottomMenu extends StatelessWidget {
             child: _MenuItem(
               label: 'Comisiones',
               asset: 'assets/svg/Icono de comisiones - líneas gris.svg',
+              selected: selected == AppBottomMenuSection.commissions,
               onPressed: onCommissions,
             ),
           ),
