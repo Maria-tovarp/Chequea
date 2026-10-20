@@ -102,7 +102,7 @@ class _HomePageState extends State<HomePage> {
     final audioPath =
         savedAudioPath == null ||
             savedAudioPath.isEmpty ||
-            !savedAudioPath.toLowerCase().endsWith('.ogg')
+            !_isPlayableAudioPath(savedAudioPath)
         ? null
         : await File(savedAudioPath).exists()
         ? savedAudioPath
@@ -201,19 +201,37 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     final directory = await getApplicationDocumentsDirectory();
-    await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.opus),
-      path:
-          '${directory.path}/nota-${DateTime.now().millisecondsSinceEpoch}.ogg',
-    );
-    if (mounted) setState(() => _isRecording = true);
+    final usesIosFormat = Platform.isIOS;
+    final extension = usesIosFormat ? 'm4a' : 'ogg';
+    try {
+      await _audioRecorder.start(
+        RecordConfig(
+          encoder: usesIosFormat ? AudioEncoder.aacLc : AudioEncoder.opus,
+        ),
+        path:
+            '${directory.path}/nota-${DateTime.now().millisecondsSinceEpoch}.$extension',
+      );
+      if (mounted) setState(() => _isRecording = true);
+    } on Exception {
+      if (mounted) {
+        _info(
+          'Nota de voz',
+          'No fue posible iniciar la grabación. Revisa el permiso del micrófono e inténtalo nuevamente.',
+        );
+      }
+    }
+  }
+
+  bool _isPlayableAudioPath(String path) {
+    final normalizedPath = path.toLowerCase();
+    if (Platform.isIOS) return normalizedPath.endsWith('.m4a');
+    return normalizedPath.endsWith('.ogg') || normalizedPath.endsWith('.m4a');
   }
 
   Future<void> _toggleAudioPreview() async {
     final audioPath = _audioPath;
     if (audioPath == null || _isRecording) return;
-    if (!audioPath.toLowerCase().endsWith('.ogg') ||
-        !await File(audioPath).exists()) {
+    if (!_isPlayableAudioPath(audioPath) || !await File(audioPath).exists()) {
       if (mounted) {
         setState(() => _audioPath = null);
         _saveDraft();

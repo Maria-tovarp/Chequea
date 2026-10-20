@@ -91,7 +91,9 @@ flutter_native_splash:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/logo/Icono_720px_fondoblanco.jpg
+  remove_alpha_ios: true
+  image_path_android: assets/logo/Icono_720px_android.png
+  image_path_ios: assets/logo/Icono_720px_ios.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

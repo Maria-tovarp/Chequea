@@ -42,6 +42,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   bool _saving = false;
   bool _pickingPhoto = false;
   bool _submitted = false;
+  bool _loadingProfile = true;
   int _profileLoadVersion = 0;
 
   @override
@@ -58,8 +59,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     _bankAccountType = widget.session.bankAccountType;
     _bankName = widget.session.bankName;
     _bankAccountHolder.text = widget.session.bankAccountHolder ?? '';
-    _recoverLostPhoto();
-    _load();
+    _initialize();
   }
 
   @override
@@ -143,10 +143,27 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
   }
 
+  Future<void> _initialize() async {
+    await _recoverLostPhoto();
+    await _load();
+  }
+
   Future<void> _load() async {
     final loadVersion = _profileLoadVersion;
-    final optionsResult = await _auth.getProfileOptions(widget.session);
-    if (!mounted || loadVersion != _profileLoadVersion) return;
+    final results = await Future.wait<Object>([
+      _auth.getProfile(widget.session),
+      _auth.getProfileOptions(widget.session),
+    ]);
+    if (!mounted) return;
+    if (loadVersion != _profileLoadVersion) {
+      setState(() => _loadingProfile = false);
+      return;
+    }
+    final profileResult = results[0] as ProfileResult;
+    final optionsResult = results[1] as ProfileOptionsResult;
+    if (profileResult.isSuccess) {
+      _applyProfile(profileResult.session!);
+    }
     if (optionsResult.isSuccess) {
       final options = optionsResult.options!;
       _medicalSpecialties = options.medicalSpecialties;
@@ -157,7 +174,21 @@ class _EditProfilePageState extends State<EditProfilePage> {
       _bankAccountType = _normalizeOption(_bankAccountType, _bankAccountTypes);
       _bankName = _normalizeOption(_bankName, _banks);
     }
-    if (mounted) setState(() {});
+    if (mounted) setState(() => _loadingProfile = false);
+  }
+
+  void _applyProfile(UserSession session) {
+    _session = session;
+    _fullName.text = session.fullName ?? '';
+    _email.text = session.email ?? '';
+    _cellphone.text = session.cellphone ?? '';
+    _photoPath = session.doctorPhotoPath;
+    _specialty = session.specialty;
+    _specialtyTitle = session.specialtyTitle;
+    _bankAccountNumber.text = session.bankAccountNumber ?? '';
+    _bankAccountType = session.bankAccountType;
+    _bankName = session.bankName;
+    _bankAccountHolder.text = session.bankAccountHolder ?? '';
   }
 
   String? _normalizeOption(String? value, List<ProfileOption> options) {
@@ -175,8 +206,25 @@ class _EditProfilePageState extends State<EditProfilePage> {
     return _specialtyTitle;
   }
 
-  String? _required(String value) =>
-      _submitted && value.trim().isEmpty ? 'Rellene este campo.' : null;
+  String? _required(String value, String label) =>
+      _submitted && value.trim().isEmpty ? '$label es obligatorio.' : null;
+
+  String? _bankAccountNumberError(String value) {
+    if (!_submitted) return null;
+    final accountNumber = value.trim();
+    if (accountNumber.isEmpty) {
+      return 'El número de cuenta es obligatorio.';
+    }
+    if (accountNumber.length < 6) {
+      return 'Ingresa un número de cuenta válido.';
+    }
+    return null;
+  }
+
+  String? _requiredSelection(String? value, String label) =>
+      _submitted && (value == null || value.isEmpty)
+      ? '$label es obligatorio.'
+      : null;
 
   Future<void> _save() async {
     setState(() => _submitted = true);
@@ -186,12 +234,25 @@ class _EditProfilePageState extends State<EditProfilePage> {
         _email.text.trim().contains('@') &&
         _cellphone.text.trim().isNotEmpty &&
         (_specialty?.isNotEmpty ?? false) &&
-        _bankAccountNumber.text.trim().isNotEmpty &&
+        _bankAccountNumberError(_bankAccountNumber.text) == null &&
         (_bankAccountType?.isNotEmpty ?? false) &&
         (_bankName?.isNotEmpty ?? false) &&
         _bankAccountHolder.text.trim().isNotEmpty &&
         (!hasPassword || _password.text == _repeatPassword.text);
-    if (!valid || _saving || _session == null) return;
+    if (!valid || _saving || _session == null) {
+      if (!_saving && _session != null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Revisa los campos marcados en rojo. Los campos con * son obligatorios.',
+              ),
+            ),
+          );
+      }
+      return;
+    }
     // Invalidates any profile request still running from the initial screen load.
     _profileLoadVersion++;
     FocusScope.of(context).unfocus();
@@ -301,6 +362,15 @@ class _EditProfilePageState extends State<EditProfilePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_loadingProfile)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 14),
+                      child: LinearProgressIndicator(
+                        minHeight: 2,
+                        color: Color(0xFF009FA4),
+                        backgroundColor: Color(0xFFE5F8F7),
+                      ),
+                    ),
                   _ProfileCard(
                     icon: Icons.person_outline_rounded,
                     title: 'Información personal',
@@ -533,13 +603,17 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   _ProfileCard(
                     icon: Icons.account_balance_outlined,
                     title: 'Información de pago',
-                    subtitle: 'Cuenta bancaria donde recibirás tus comisiones.',
+                    subtitle:
+                        'Cuenta bancaria donde recibirás tus comisiones. Los campos con * son obligatorios.',
                     child: Column(
                       children: [
                         _field(
                           'Número de cuenta bancaria',
                           _bankAccountNumber,
                           Icons.account_balance_outlined,
+                          error: _bankAccountNumberError(
+                            _bankAccountNumber.text,
+                          ),
                           keyboardType: TextInputType.number,
                           inputFormatters: [
                             FilteringTextInputFormatter.digitsOnly,
@@ -637,7 +711,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         obscureText: obscure,
         style: const TextStyle(color: Color(0xFF1A1A1A), fontSize: 15),
         decoration: InputDecoration(
-          labelText: label,
+          labelText: required ? '$label *' : label,
           labelStyle: const TextStyle(fontSize: 13, color: Color(0xFF647194)),
           prefixIcon: Icon(icon, size: 21, color: const Color(0xFF435678)),
           contentPadding: const EdgeInsets.symmetric(
@@ -650,7 +724,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
             color: const Color(0xFF009FA4),
             width: 1.5,
           ),
-          errorText: error ?? (required ? _required(controller.text) : null),
+          errorText:
+              error ?? (required ? _required(controller.text, label) : null),
         ),
       ),
     ),
@@ -663,6 +738,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     required IconData icon,
     required List<ProfileOption> items,
     required ValueChanged<String?> onChanged,
+    bool required = true,
   }) {
     final hasSelectedValue = items.any((item) => item.value == value);
     final displayItems = value != null && value.isNotEmpty && !hasSelectedValue
@@ -686,7 +762,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
           size: 22,
         ),
         decoration: InputDecoration(
-          labelText: label,
+          labelText: required ? '$label *' : label,
           labelStyle: const TextStyle(fontSize: 13, color: Color(0xFF647194)),
           prefixIcon: Icon(icon, size: 21, color: const Color(0xFF435678)),
           contentPadding: const EdgeInsets.symmetric(
@@ -699,9 +775,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
             color: const Color(0xFF009FA4),
             width: 1.5,
           ),
-          errorText: _submitted && (value == null || value.isEmpty)
-              ? 'Seleccione una opción.'
-              : null,
+          errorText: required ? _requiredSelection(value, label) : null,
         ),
         items: displayItems
             .map(
