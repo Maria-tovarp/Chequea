@@ -47,8 +47,8 @@ class AppConfig {
   static CountryConfig forCountry(String country) {
     return const CountryConfig(
       country: 'Panamá',
-      loginUrl: 'https://prepro.chequeandome.com.pa/chequea/sesion/login/',
-      websiteUrl: 'https://prepro.chequeandome.com.pa/chequea/sesion/login/',
+      loginUrl: 'https://chequeandome.com/chequea/sesion/login/',
+      websiteUrl: 'https://chequeandome.com/chequea/sesion/login/',
       apiKeyEnvironment: 'PANAMA_API_KEY',
     );
   }
