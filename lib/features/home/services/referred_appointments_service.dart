@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../auth/models/user_session.dart';
+import '../../auth/services/session_expiration.dart';
 
 class ReferredAppointmentsService {
   const ReferredAppointmentsService({http.Client? client}) : _client = client;
@@ -61,6 +62,9 @@ class ReferredAppointmentsService {
             },
           )
           .timeout(const Duration(seconds: 60));
+      if (isSessionExpiredResponse(response)) {
+        throw const ReferredAppointmentsException.sessionExpired();
+      }
       final payload = jsonDecode(response.body);
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||
@@ -103,7 +107,10 @@ class ReferredAppointmentsService {
 }
 
 class ReferredAppointmentsException implements Exception {
-  const ReferredAppointmentsException();
+  const ReferredAppointmentsException({this.sessionExpired = false});
+  const ReferredAppointmentsException.sessionExpired() : sessionExpired = true;
+
+  final bool sessionExpired;
 }
 
 class ReferredAppointmentsResult {

@@ -8,6 +8,7 @@ import 'features/auth/pages/login_page.dart';
 import 'features/auth/services/auth_service.dart';
 import 'features/auth/services/session_store.dart';
 import 'features/home/pages/home_page.dart';
+import 'features/home/services/home_local_data_store.dart';
 
 class ChequeaApp extends StatefulWidget {
   const ChequeaApp({
@@ -23,17 +24,26 @@ class ChequeaApp extends StatefulWidget {
   State<ChequeaApp> createState() => _ChequeaAppState();
 }
 
-class _ChequeaAppState extends State<ChequeaApp> {
+class _ChequeaAppState extends State<ChequeaApp> with WidgetsBindingObserver {
   late UserSession? _session = widget.initialSession;
   Timer? _initialSplashTimer;
+  Timer? _sessionValidationTimer;
   bool _showInitialSplash = false;
+  bool _refreshingSession = false;
+  bool _validatingInitialSession = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final session = _session;
     if (session != null) {
+      _validatingInitialSession = true;
       unawaited(_refreshSession(session));
+      _sessionValidationTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+        final currentSession = _session;
+        if (currentSession != null) unawaited(_refreshSession(currentSession));
+      });
     }
     if (widget.showInitialSplash) {
       _showInitialSplash = true;
@@ -45,32 +55,65 @@ class _ChequeaAppState extends State<ChequeaApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _initialSplashTimer?.cancel();
+    _sessionValidationTimer?.cancel();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final session = _session;
+    if (session != null) unawaited(_refreshSession(session));
+  }
+
   Future<void> _refreshSession(UserSession session) async {
+    if (_refreshingSession || !_matchesSession(_session, session)) return;
+    _refreshingSession = true;
     const authService = AuthService();
-    final result = await authService.refreshSession(session);
-    final refreshedSession = result.session;
-    UserSession? updatedSession;
-    if (refreshedSession != null) {
-      final profile = await authService.getProfile(refreshedSession);
-      updatedSession = profile.isSuccess ? profile.session : refreshedSession;
-    } else if (result.invalid) {
-      if (!identical(_session, session)) return;
-      await SessionStore.clear();
-    }
-    if (!identical(_session, session)) return;
-    if (updatedSession != null) await SessionStore.save(updatedSession);
-    if (!mounted) return;
-    if (updatedSession != null || result.invalid) {
-      setState(() => _session = updatedSession);
+    try {
+      final result = await authService.refreshSession(session);
+      final refreshedSession = result.session;
+      UserSession? updatedSession;
+      var sessionInvalid = result.invalid;
+      if (refreshedSession != null) {
+        final profile = await authService.getProfile(refreshedSession);
+        sessionInvalid = profile.invalid;
+        updatedSession = profile.isSuccess ? profile.session : refreshedSession;
+      }
+      if (!_matchesSession(_session, session)) return;
+      if (sessionInvalid) {
+        await _clearSession();
+        return;
+      }
+      if (updatedSession != null) {
+        await SessionStore.save(updatedSession);
+        if (mounted) setState(() => _session = updatedSession);
+      }
+    } finally {
+      _refreshingSession = false;
+      if (_validatingInitialSession && mounted) {
+        setState(() => _validatingInitialSession = false);
+      }
     }
   }
 
   void _replaceSession(UserSession session) {
     if (mounted) setState(() => _session = session);
+  }
+
+  bool _matchesSession(UserSession? current, UserSession expected) =>
+      current != null &&
+      current.username == expected.username &&
+      current.country == expected.country &&
+      current.refreshToken == expected.refreshToken;
+
+  Future<void> _clearSession() async {
+    final session = _session;
+    if (session != null) await HomeLocalDataStore.clearFor(session);
+    await SessionStore.clear();
+    if (mounted) setState(() => _session = null);
   }
 
   @override
@@ -186,12 +229,15 @@ class _ChequeaAppState extends State<ChequeaApp> {
         ],
       );
     },
-    home: switch (_session) {
-      final session? => HomePage(
-        session: session,
-        onSessionUpdated: _replaceSession,
-      ),
-      null => const LoginPage(),
-    },
+    home: _validatingInitialSession
+        ? const Scaffold(backgroundColor: Colors.white)
+        : switch (_session) {
+            final session? => HomePage(
+              session: session,
+              onSessionUpdated: _replaceSession,
+              onSessionExpired: _clearSession,
+            ),
+            null => const LoginPage(),
+          },
   );
 }

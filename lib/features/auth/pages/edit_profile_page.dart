@@ -161,6 +161,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
     }
     final profileResult = results[0] as ProfileResult;
     final optionsResult = results[1] as ProfileOptionsResult;
+    if (profileResult.invalid || optionsResult.invalid) {
+      await _logout();
+      return;
+    }
     if (profileResult.isSuccess) {
       _applyProfile(profileResult.session!);
     }
@@ -316,6 +320,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
     if (!mounted) return;
     setState(() => _saving = false);
+    if (result.invalid) {
+      await _logout();
+      return;
+    }
     if (!result.isSuccess) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

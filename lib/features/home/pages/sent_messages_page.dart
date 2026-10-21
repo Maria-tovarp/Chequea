@@ -115,13 +115,18 @@ class _SentMessagesPageState extends State<SentMessagesPage> {
         endDate: _endDate,
         cellphone: _cellphone.text,
       );
-    } on SentMessagesException {
+    } on SentMessagesException catch (error) {
+      if (error.sessionExpired) {
+        await SessionStore.clear();
+        if (mounted) _goToLogin();
+        rethrow;
+      }
       final refresh = await const AuthService().refreshSession(_session);
       final refreshed = refresh.session;
       if (refreshed == null) {
         if (refresh.invalid) {
           await SessionStore.clear();
-          if (mounted) setState(() => _sessionExpired = true);
+          if (mounted) _goToLogin();
         }
         rethrow;
       }

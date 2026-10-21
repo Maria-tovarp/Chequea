@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/config/app_config.dart';
 import '../../auth/models/user_session.dart';
+import '../../auth/services/session_expiration.dart';
 
 class ClinicsPreviewService {
   const ClinicsPreviewService({http.Client? client}) : _client = client;
@@ -32,6 +33,9 @@ class ClinicsPreviewService {
           'Authorization': 'Bearer ${session.accessToken}',
         },
       );
+      if (isSessionExpiredResponse(response)) {
+        return const ClinicsPreview(totalClinics: 0, sessionExpired: true);
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw const FormatException();
       }
@@ -50,8 +54,13 @@ class ClinicsPreviewService {
 }
 
 class ClinicsPreview {
-  const ClinicsPreview({required this.totalClinics, this.clinicsListUrl});
+  const ClinicsPreview({
+    required this.totalClinics,
+    this.clinicsListUrl,
+    this.sessionExpired = false,
+  });
 
   final int totalClinics;
   final String? clinicsListUrl;
+  final bool sessionExpired;
 }

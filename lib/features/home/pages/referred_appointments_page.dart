@@ -222,13 +222,18 @@ class _ReferredAppointmentsPageState extends State<ReferredAppointmentsPage> {
         appointmentDateStart: _appointmentDateStart,
         appointmentDateEnd: _appointmentDateEnd,
       );
-    } on ReferredAppointmentsException {
+    } on ReferredAppointmentsException catch (error) {
+      if (error.sessionExpired) {
+        await SessionStore.clear();
+        if (mounted) _goToLogin();
+        rethrow;
+      }
       final refresh = await const AuthService().refreshSession(_session);
       final refreshed = refresh.session;
       if (refreshed == null) {
         if (refresh.invalid) {
           await SessionStore.clear();
-          if (mounted) setState(() => _sessionExpired = true);
+          if (mounted) _goToLogin();
         }
         rethrow;
       }

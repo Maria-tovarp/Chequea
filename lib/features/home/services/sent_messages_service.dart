@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../auth/models/user_session.dart';
+import '../../auth/services/session_expiration.dart';
 
 class SentMessagesService {
   const SentMessagesService({http.Client? client}) : _client = client;
@@ -98,6 +99,9 @@ class SentMessagesService {
             },
           )
           .timeout(const Duration(seconds: 60));
+      if (isSessionExpiredResponse(response)) {
+        throw const SentMessagesException.sessionExpired();
+      }
       final payload = jsonDecode(response.body);
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||
@@ -120,6 +124,8 @@ class SentMessagesService {
         perPage: (payload['total_per_page'] as num?)?.toInt() ?? 50,
         messages: results.whereType<Map>().map(SentMessage.fromJson).toList(),
       );
+    } on SentMessagesException {
+      rethrow;
     } on Exception {
       throw const SentMessagesException();
     } finally {
@@ -132,7 +138,10 @@ class SentMessagesService {
 }
 
 class SentMessagesException implements Exception {
-  const SentMessagesException();
+  const SentMessagesException({this.sessionExpired = false});
+  const SentMessagesException.sessionExpired() : sessionExpired = true;
+
+  final bool sessionExpired;
 }
 
 class SentMessagesResult {

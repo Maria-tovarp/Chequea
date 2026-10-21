@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:chequea_app/features/auth/models/user_session.dart';
 import 'package:chequea_app/features/auth/services/auth_service.dart';
+import 'package:chequea_app/features/auth/services/session_expiration.dart';
 import 'package:chequea_app/core/config/app_config.dart';
 import 'package:chequea_app/features/home/pages/sent_messages_page.dart';
 import 'package:chequea_app/features/home/services/referred_appointments_service.dart';
@@ -65,6 +66,43 @@ void main() {
     );
   });
 
+  test('detecta los códigos de sesión inválida de la API', () {
+    expect(
+      isSessionExpiredResponse(
+        http.Response('{"errorcode":"general_apptoken_exception"}', 400),
+      ),
+      isTrue,
+    );
+    expect(
+      isSessionExpiredResponse(
+        http.Response('{"errorcode":"access_token_invalid"}', 400),
+      ),
+      isTrue,
+    );
+    expect(
+      isSessionExpiredResponse(
+        http.Response('{"errorcode":"invalid_apikey"}', 401),
+      ),
+      isTrue,
+    );
+  });
+
+  test('descarta la sesión si falla la renovación del access token', () async {
+    final client = _FakeHttpClient(http.Response('', 400));
+    final result = await AuthService(client: client, apiKey: 'test-key')
+        .refreshSession(
+          const UserSession(
+            username: 'maria',
+            country: 'PanamÃ¡',
+            isChequeandomeAgent: false,
+            refreshToken: 'invalid-refresh-token',
+            accessToken: 'access',
+          ),
+        );
+
+    expect(result.invalid, isTrue);
+  });
+
   test('lee una referencia con paciente y servicios anidados', () {
     final appointment = ReferralAppointment.fromJson({
       'id': 16199,
@@ -110,4 +148,18 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+}
+
+class _FakeHttpClient extends http.BaseClient {
+  _FakeHttpClient(this.response);
+
+  final http.Response response;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      http.StreamedResponse(
+        Stream.value(response.bodyBytes),
+        response.statusCode,
+        headers: response.headers,
+      );
 }

@@ -23,7 +23,8 @@ Future<void> main() async {
       statusBarIconBrightness: Brightness.dark,
     ),
   );
-  final requiresLogin = await InstallSessionGuard.requiresLoginAfterUpdate();
+  final requiresLogin =
+      await InstallSessionGuard.requiresLoginAfterInstallOrUpdate();
   if (requiresLogin) await SessionStore.clear();
   final session = requiresLogin ? null : await SessionStore.load();
   runApp(ChequeaApp(initialSession: session, showInitialSplash: true));

@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../../../core/config/app_config.dart';
 import '../models/login_result.dart';
 import '../models/user_session.dart';
+import 'session_expiration.dart';
 
 class AuthService {
-  const AuthService({http.Client? client}) : _client = client;
+  const AuthService({http.Client? client, String? apiKey})
+    : _client = client,
+      _apiKey = apiKey;
   final http.Client? _client;
+  final String? _apiKey;
 
   Future<LoginResult> login({
     required String username,
@@ -25,14 +30,16 @@ class AuthService {
     final client = _client ?? http.Client();
     try {
       final basic = base64Encode(utf8.encode('$username:$password'));
-      final refreshResponse = await client.post(
-        Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth'),
-        headers: {
-          'Accept': 'application/json',
-          'x-api-key': apiKey,
-          'Authorization': 'Basic $basic',
-        },
-      );
+      final refreshResponse = await client
+          .post(
+            Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth'),
+            headers: {
+              'Accept': 'application/json',
+              'x-api-key': apiKey,
+              'Authorization': 'Basic $basic',
+            },
+          )
+          .timeout(const Duration(seconds: 30));
       final refresh = _payload(refreshResponse);
       if (refreshResponse.statusCode < 200 ||
           refreshResponse.statusCode >= 300) {
@@ -75,6 +82,11 @@ class AuthService {
         },
       );
       final profile = _payload(profileResponse);
+      if (isSessionExpiredResponse(profileResponse) ||
+          profileResponse.statusCode < 200 ||
+          profileResponse.statusCode >= 300) {
+        return LoginResult.failure(_error(profile));
+      }
       final profileBranding = brandingNameFromPayload(profile);
       if (profileBranding != null) {
         return LoginResult.brandingBlocked(profileBranding);
@@ -92,6 +104,17 @@ class AuthService {
           inviteLink: refresh['invite_link']?.toString(),
         ),
       );
+    } on TimeoutException {
+      return const LoginResult.failure(
+        'La solicitud tardó demasiado. Inténtalo nuevamente.',
+      );
+    } on http.ClientException catch (error) {
+      if (error.message.contains('Failed host lookup')) {
+        return const LoginResult.failure(
+          'No se pudo resolver el servidor. Revisa tu conexión a internet.',
+        );
+      }
+      return const LoginResult.failure('No se pudo conectar con el servicio.');
     } on Exception {
       return const LoginResult.failure('No se pudo conectar con el servicio.');
     } finally {
@@ -101,7 +124,7 @@ class AuthService {
 
   Future<SessionRefreshResult> refreshSession(UserSession session) async {
     final config = AppConfig.forCountry(session.country);
-    final apiKey = config.apiKeyFor(session.country);
+    final apiKey = _apiKey ?? config.apiKeyFor(session.country);
     if (apiKey.isEmpty) return const SessionRefreshResult.unavailable();
     final ownsClient = _client == null;
     final client = _client ?? http.Client();
@@ -116,7 +139,8 @@ class AuthService {
             },
           )
           .timeout(const Duration(seconds: 30));
-      if (response.statusCode == 401 || response.statusCode == 403) {
+      if (isSessionExpiredResponse(response) ||
+          const {400, 401, 403, 404}.contains(response.statusCode)) {
         return const SessionRefreshResult.invalidCredentials();
       }
       final accessToken = _payload(response)['access_token']?.toString();
@@ -218,6 +242,9 @@ class AuthService {
           )
           .timeout(const Duration(seconds: 30));
       final profile = _payload(response);
+      if (isSessionExpiredResponse(response)) {
+        return const ProfileResult.invalidCredentials();
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return ProfileResult.failure(_error(profile));
       }
@@ -294,6 +321,9 @@ class AuthService {
         await client.send(request).timeout(const Duration(seconds: 30)),
       );
       final payload = _payload(response);
+      if (isSessionExpiredResponse(response)) {
+        return const ProfileResult.invalidCredentials();
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return ProfileResult.failure(_error(payload));
       }
@@ -415,6 +445,9 @@ class AuthService {
             },
           )
           .timeout(const Duration(seconds: 30));
+      if (isSessionExpiredResponse(response)) {
+        return const ProfileOptionsResult.invalidCredentials();
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return const ProfileOptionsResult.failure();
       }
@@ -444,11 +477,13 @@ class SessionRefreshResult {
 }
 
 class ProfileResult {
-  const ProfileResult._({this.session, this.error});
+  const ProfileResult._({this.session, this.error, this.invalid = false});
   const ProfileResult.success(UserSession session) : this._(session: session);
   const ProfileResult.failure(String error) : this._(error: error);
+  const ProfileResult.invalidCredentials() : this._(invalid: true);
   final UserSession? session;
   final String? error;
+  final bool invalid;
   bool get isSuccess => session != null;
 }
 
@@ -477,10 +512,12 @@ class ProfileOptions {
 }
 
 class ProfileOptionsResult {
-  const ProfileOptionsResult._(this.options);
+  const ProfileOptionsResult._(this.options, {this.invalid = false});
   const ProfileOptionsResult.success(ProfileOptions options) : this._(options);
   const ProfileOptionsResult.failure() : this._(null);
+  const ProfileOptionsResult.invalidCredentials() : this._(null, invalid: true);
   final ProfileOptions? options;
+  final bool invalid;
   bool get isSuccess => options != null;
 }
 

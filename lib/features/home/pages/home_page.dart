@@ -20,6 +20,7 @@ import '../../auth/models/user_session.dart';
 import '../../auth/pages/login_page.dart';
 import '../../auth/pages/edit_profile_page.dart';
 import '../../auth/services/auth_service.dart';
+import '../../auth/services/session_expiration.dart';
 import '../../auth/services/session_store.dart';
 import 'referred_appointments_page.dart';
 import 'sent_messages_page.dart';
@@ -32,9 +33,15 @@ import '../widgets/app_notice_dialog.dart';
 import '../widgets/commissions_coming_soon_dialog.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.session, this.onSessionUpdated});
+  const HomePage({
+    super.key,
+    required this.session,
+    this.onSessionUpdated,
+    this.onSessionExpired,
+  });
   final UserSession session;
   final ValueChanged<UserSession>? onSessionUpdated;
+  final Future<void> Function()? onSessionExpired;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -125,23 +132,67 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _syncingProfile = true;
     try {
       final result = await _authService.getProfile(session);
-      if (!mounted || !identical(_session, session) || !result.isSuccess) {
+      if (!mounted || !identical(_session, session)) {
         return;
       }
-      final updatedSession = result.session!;
-      _evictProfileImage(
-        updatedSession.doctorPhotoPath?.trim() ?? '',
-        updatedSession,
-      );
-      setState(() {
-        _session = updatedSession;
-        _displayNameOverride = updatedSession.fullName;
-      });
-      await SessionStore.save(updatedSession);
-      widget.onSessionUpdated?.call(updatedSession);
+      if (result.invalid) {
+        final refresh = await _authService.refreshSession(session);
+        if (!mounted || !identical(_session, session)) return;
+        if (refresh.invalid) {
+          await _handleSessionExpired();
+          return;
+        }
+        final refreshedSession = refresh.session;
+        if (refreshedSession == null) return;
+        final refreshedProfile = await _authService.getProfile(
+          refreshedSession,
+        );
+        if (!mounted || !identical(_session, session)) return;
+        if (refreshedProfile.invalid) {
+          await _handleSessionExpired();
+          return;
+        }
+        await _applyProfileSession(
+          refreshedProfile.isSuccess
+              ? refreshedProfile.session!
+              : refreshedSession,
+        );
+        return;
+      }
+      if (!result.isSuccess) return;
+      await _applyProfileSession(result.session!);
     } finally {
       _syncingProfile = false;
     }
+  }
+
+  Future<void> _applyProfileSession(UserSession updatedSession) async {
+    if (!mounted) return;
+    _evictProfileImage(
+      updatedSession.doctorPhotoPath?.trim() ?? '',
+      updatedSession,
+    );
+    setState(() {
+      _session = updatedSession;
+      _displayNameOverride = updatedSession.fullName;
+    });
+    await SessionStore.save(updatedSession);
+    widget.onSessionUpdated?.call(updatedSession);
+  }
+
+  Future<void> _handleSessionExpired() async {
+    await HomeLocalDataStore.clearFor(_session);
+    final onSessionExpired = widget.onSessionExpired;
+    if (onSessionExpired != null) {
+      await onSessionExpired();
+      return;
+    }
+    await SessionStore.clear();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (_) => false,
+    );
   }
 
   Future<void> _restoreDraft() async {
@@ -593,6 +644,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
     if (!mounted) return;
     setState(() => _sending = false);
+    if (result.sessionExpired) {
+      await _handleSessionExpired();
+      return;
+    }
     if (!result.success) {
       _showMessage(result.message);
       return;
@@ -741,6 +796,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       serviceIds: _selectedExams.map((exam) => exam.id).toList(),
     );
     if (!mounted || requestId != _clinicsRequestId) return;
+    if (preview.sessionExpired) {
+      await _handleSessionExpired();
+      return;
+    }
     setState(() {
       _totalClinics = preview.totalClinics;
       _clinicsListUrl = preview.clinicsListUrl;
@@ -1223,6 +1282,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               _ExamSelector(
                                 session: _session,
                                 onSelected: _addExam,
+                                onSessionExpired: _handleSessionExpired,
                                 onSearchActivity: (isSearching) => setState(
                                   () => _isSearchingExams = isSearching,
                                 ),
@@ -1445,10 +1505,12 @@ class _ExamSelector extends StatefulWidget {
   const _ExamSelector({
     required this.session,
     required this.onSelected,
+    required this.onSessionExpired,
     required this.onSearchActivity,
   });
   final UserSession session;
   final ValueChanged<_ExamOption> onSelected;
+  final Future<void> Function() onSessionExpired;
   final ValueChanged<bool> onSearchActivity;
 
   @override
@@ -1940,6 +2002,10 @@ class _ExamSelectorState extends State<_ExamSelector> {
           'Authorization': 'Bearer ${widget.session.accessToken}',
         },
       );
+      if (isSessionExpiredResponse(response)) {
+        await widget.onSessionExpired();
+        return;
+      }
       final data = jsonDecode(response.body);
       final items = data is Map<String, dynamic> && data['results'] is List
           ? (data['results'] as List)

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/config/app_config.dart';
 import '../../auth/models/user_session.dart';
+import '../../auth/services/session_expiration.dart';
 
 class MessageService {
   const MessageService({http.Client? client}) : _client = client;
@@ -57,6 +58,9 @@ class MessageService {
         await client.send(request),
       );
       final payload = _payload(response.body);
+      if (isSessionExpiredResponse(response)) {
+        return const MessageSendResult.sessionExpired();
+      }
       if (response.statusCode >= 200 &&
           response.statusCode < 300 &&
           payload['success'] == true) {
@@ -82,14 +86,25 @@ class MessageService {
 }
 
 class MessageSendResult {
-  const MessageSendResult._({required this.success, required this.message});
+  const MessageSendResult._({
+    required this.success,
+    required this.message,
+    this.sessionExpired = false,
+  });
   const MessageSendResult.success(String message)
     : this._(success: true, message: message);
   const MessageSendResult.failure(String message)
     : this._(success: false, message: message);
+  const MessageSendResult.sessionExpired()
+    : this._(
+        success: false,
+        message: 'Tu sesión venció. Inicia sesión nuevamente.',
+        sessionExpired: true,
+      );
 
   final bool success;
   final String message;
+  final bool sessionExpired;
 }
 
 Map<String, dynamic> _payload(String body) {
