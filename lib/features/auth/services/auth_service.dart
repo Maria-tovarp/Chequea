@@ -55,14 +55,16 @@ class AuthService {
       if (refreshBranding != null) {
         return LoginResult.brandingBlocked(refreshBranding);
       }
-      final accessResponse = await client.post(
-        Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth/access'),
-        headers: {
-          'Accept': 'application/json',
-          'x-api-key': apiKey,
-          'Authorization': 'Bearer $refreshToken',
-        },
-      );
+      final accessResponse = await client
+          .post(
+            Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth/access'),
+            headers: {
+              'Accept': 'application/json',
+              'x-api-key': apiKey,
+              'Authorization': 'Bearer $refreshToken',
+            },
+          )
+          .timeout(const Duration(seconds: 30));
       final access = _payload(accessResponse);
       final accessToken = access['access_token']?.toString();
       if (accessResponse.statusCode < 200 ||
@@ -71,16 +73,18 @@ class AuthService {
           accessToken.isEmpty) {
         return LoginResult.failure(_error(access));
       }
-      final profileResponse = await client.get(
-        Uri.parse(
-          '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/account/profile',
-        ),
-        headers: {
-          'Accept': 'application/json',
-          'x-api-key': apiKey,
-          'Authorization': 'Bearer $accessToken',
-        },
-      );
+      final profileResponse = await client
+          .get(
+            Uri.parse(
+              '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/account/profile',
+            ),
+            headers: {
+              'Accept': 'application/json',
+              'x-api-key': apiKey,
+              'Authorization': 'Bearer $accessToken',
+            },
+          )
+          .timeout(const Duration(seconds: 30));
       final profile = _payload(profileResponse);
       if (isSessionExpiredResponse(profileResponse) ||
           profileResponse.statusCode < 200 ||
@@ -91,19 +95,18 @@ class AuthService {
       if (profileBranding != null) {
         return LoginResult.brandingBlocked(profileBranding);
       }
-      return LoginResult.success(
-        UserSession(
-          username: refresh['username']?.toString() ?? username,
-          country: country,
-          isChequeandomeAgent: refresh['is_chq_agent'] == true,
-          refreshToken: refreshToken,
-          accessToken: accessToken,
-          fullName: profile['fullname']?.toString(),
-          email: profile['email']?.toString(),
-          cellphone: profile['cellphone_number']?.toString(),
-          inviteLink: refresh['invite_link']?.toString(),
-        ),
+      final session = UserSession(
+        username: refresh['username']?.toString() ?? username,
+        country: country,
+        isChequeandomeAgent: refresh['is_chq_agent'] == true,
+        refreshToken: refreshToken,
+        accessToken: accessToken,
+        fullName: profile['fullname']?.toString(),
+        email: profile['email']?.toString(),
+        cellphone: profile['cellphone_number']?.toString(),
+        inviteLink: refresh['invite_link']?.toString(),
       );
+      return LoginResult.success(_sessionWithProfile(session, profile));
     } on TimeoutException {
       return const LoginResult.failure(
         'La solicitud tardó demasiado. Inténtalo nuevamente.',

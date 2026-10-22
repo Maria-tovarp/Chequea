@@ -81,21 +81,7 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     final cachedSession = await SessionStore.load();
-    final profile = await widget.authService.getProfile(loginSession);
-    if (profile.invalid) {
-      await SessionStore.clear();
-      if (!mounted) return;
-      setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Tu sesión venció. Inicia sesión nuevamente.'),
-        ),
-      );
-      return;
-    }
-    var session = profile.isSuccess
-        ? profile.session!
-        : _withCachedProfile(loginSession, cachedSession);
+    var session = _withCachedProfile(loginSession, cachedSession);
     session = await _cacheProfilePhoto(session, cachedSession);
     await HomeLocalDataStore.clearFor(session);
     await SessionStore.save(session);

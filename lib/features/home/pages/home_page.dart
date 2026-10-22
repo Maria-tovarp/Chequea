@@ -180,6 +180,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     widget.onSessionUpdated?.call(updatedSession);
   }
 
+  /// Renueva únicamente el access token para poder reintentar una petición que
+  /// fue rechazada por expiración. Una falla temporal conserva la sesión.
+  Future<UserSession?> _refreshSessionForRequest() async {
+    final session = _session;
+    final refresh = await _authService.refreshSession(session);
+    if (!mounted || !identical(_session, session)) return null;
+    if (refresh.invalid) {
+      await _handleSessionExpired();
+      return null;
+    }
+    final refreshedSession = refresh.session;
+    if (refreshedSession == null) return null;
+    await _applyProfileSession(refreshedSession);
+    return refreshedSession;
+  }
+
   Future<void> _handleSessionExpired() async {
     await HomeLocalDataStore.clearFor(_session);
     final onSessionExpired = widget.onSessionExpired;
@@ -1282,6 +1298,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               _ExamSelector(
                                 session: _session,
                                 onSelected: _addExam,
+                                onSessionRefresh: _refreshSessionForRequest,
                                 onSessionExpired: _handleSessionExpired,
                                 onSearchActivity: (isSearching) => setState(
                                   () => _isSearchingExams = isSearching,
@@ -1505,11 +1522,13 @@ class _ExamSelector extends StatefulWidget {
   const _ExamSelector({
     required this.session,
     required this.onSelected,
+    required this.onSessionRefresh,
     required this.onSessionExpired,
     required this.onSearchActivity,
   });
   final UserSession session;
   final ValueChanged<_ExamOption> onSelected;
+  final Future<UserSession?> Function() onSessionRefresh;
   final Future<void> Function() onSessionExpired;
   final ValueChanged<bool> onSearchActivity;
 
@@ -1993,18 +2012,25 @@ class _ExamSelectorState extends State<_ExamSelector> {
     final country = AppConfig.forCountry(widget.session.country);
     final apiKey = country.apiKeyFor(widget.session.country);
     try {
-      final response = await http.get(
+      Future<http.Response> search(UserSession session) => http.get(
         Uri.parse(
           '${Uri.parse(country.loginUrl).origin}/api/chequea-api/v1/services/search',
         ).replace(queryParameters: {'q': query}),
         headers: {
           'x-api-key': apiKey,
-          'Authorization': 'Bearer ${widget.session.accessToken}',
+          'Authorization': 'Bearer ${session.accessToken}',
         },
       );
+
+      var response = await search(widget.session);
       if (isSessionExpiredResponse(response)) {
-        await widget.onSessionExpired();
-        return;
+        final refreshedSession = await widget.onSessionRefresh();
+        if (refreshedSession == null) return;
+        response = await search(refreshedSession);
+        if (isSessionExpiredResponse(response)) {
+          await widget.onSessionExpired();
+          return;
+        }
       }
       final data = jsonDecode(response.body);
       final items = data is Map<String, dynamic> && data['results'] is List

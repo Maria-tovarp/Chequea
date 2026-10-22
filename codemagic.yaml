@@ -1,97 +1,92 @@
 workflows:
-  ios-unsigned-workflow:
-    name: Chequea iOS sin firma
+  ios-prepro-unsigned:
+    name: Chequea iOS Prepro sin firma
     instance_type: mac_mini_m2
     max_build_duration: 120
-
     environment:
       groups:
-        - chequea_secrets
+        - chequea_prepro
       flutter: 3.41.9
       xcode: 16.4
       cocoapods: default
-
     scripts:
-      - name: Verificar versiones Flutter y Dart
+      - name: Crear configuración Prepro
         script: |
-          set -e
-          flutter --version
-          dart --version
-
-      - name: Validar API Keys
+          set -eu
+          cd "$CM_BUILD_DIR"
+          : "${SECRETS_PREPRO_JSON:?Falta SECRETS_PREPRO_JSON}"
+          umask 077
+          mkdir -p config
+          printf '%s\n' "$SECRETS_PREPRO_JSON" > config/secrets.prepro.json
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); expected={"CHEQUEA_APP_ENV","PANAMA_API_KEY","GUATEMALA_API_KEY","PANAMA_BASE_URL","GUATEMALA_BASE_URL"}; assert set(d)==expected and d["CHEQUEA_APP_ENV"]=="prepro" and d["PANAMA_API_KEY"] and d["PANAMA_BASE_URL"].startswith("https://"), "Configuración Prepro inválida"' config/secrets.prepro.json
+      - name: Preparar iOS
         script: |
           set -e
           cd "$CM_BUILD_DIR"
-
-          : "${PANAMA_API_KEY:?ERROR: falta PANAMA_API_KEY}"
-          echo "API key de Panamá configurada correctamente"
-
-      - name: Preparar proyecto Flutter para iOS
-        script: |
-          set -e
-          cd "$CM_BUILD_DIR"
-
-          rm -f ios/Flutter/Generated.xcconfig
-          rm -f ios/Flutter/flutter_export_environment.sh
-          rm -rf ios/Flutter/ephemeral
-
-          flutter clean
-          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
-
-          rm -rf ios/Pods
-          rm -f ios/Podfile.lock
-
           flutter pub get
-
-          if grep -q "flutter_launcher_icons" pubspec.yaml; then
-            dart run flutter_launcher_icons
-          fi
-
           flutter precache --ios
-
           cd ios
-          pod repo update
           pod install
-          cd ..
-
-          echo "Proyecto preparado para iOS"
-
-      - name: Compilar iOS sin firma en Release
+      - name: Compilar iOS Prepro
         script: |
           set -e
           cd "$CM_BUILD_DIR"
-
-          flutter build ios --release --no-codesign \
-            --dart-define=PANAMA_API_KEY="$PANAMA_API_KEY"
-
-      - name: Crear IPA sin firma
+          flutter build ios --release --no-codesign --dart-define-from-file=config/secrets.prepro.json
+      - name: Crear IPA Prepro sin firma
         script: |
           set -e
           cd "$CM_BUILD_DIR/build/ios/iphoneos"
-
-          if [ ! -d "Runner.app" ]; then
-            echo "ERROR: Runner.app no fue encontrado"
-            exit 1
-          fi
-
-          rm -rf Payload
-          rm -f Chequea-unsigned.ipa
-
-          mkdir Payload
+          test -d Runner.app
+          mkdir -p Payload
           cp -R Runner.app Payload/
-
-          ditto -c -k \
-            --sequesterRsrc \
-            --keepParent \
-            Payload \
-            Chequea-unsigned.ipa
-
-          test -f Chequea-unsigned.ipa
-
-          echo "IPA sin firma creado correctamente"
-          ls -lh Chequea-unsigned.ipa
-
+          ditto -c -k --sequesterRsrc --keepParent Payload prepro-chequea-unsigned.ipa
+          test -f prepro-chequea-unsigned.ipa
     artifacts:
-      - build/ios/iphoneos/Chequea-unsigned.ipa
-      - build/ios/iphoneos/Runner.app
+      - build/ios/iphoneos/prepro-chequea-unsigned.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+  ios-production-unsigned:
+    name: Chequea iOS Producción sin firma
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      groups:
+        - chequea_production
+      flutter: 3.41.9
+      xcode: 16.4
+      cocoapods: default
+    scripts:
+      - name: Crear configuración Producción
+        script: |
+          set -eu
+          cd "$CM_BUILD_DIR"
+          : "${SECRETS_PRODUCTION_JSON:?Falta SECRETS_PRODUCTION_JSON}"
+          umask 077
+          mkdir -p config
+          printf '%s\n' "$SECRETS_PRODUCTION_JSON" > config/secrets.production.json
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); expected={"CHEQUEA_APP_ENV","PANAMA_API_KEY","GUATEMALA_API_KEY","PANAMA_BASE_URL","GUATEMALA_BASE_URL"}; assert set(d)==expected and d["CHEQUEA_APP_ENV"]=="production" and d["PANAMA_API_KEY"] and d["PANAMA_BASE_URL"].startswith("https://"), "Configuración Producción inválida"' config/secrets.production.json
+      - name: Preparar iOS
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          flutter pub get
+          flutter precache --ios
+          cd ios
+          pod install
+      - name: Compilar iOS Producción
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          flutter build ios --release --no-codesign --dart-define-from-file=config/secrets.production.json
+      - name: Crear IPA Producción sin firma
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR/build/ios/iphoneos"
+          test -d Runner.app
+          mkdir -p Payload
+          cp -R Runner.app Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload prod-chequea-unsigned.ipa
+          test -f prod-chequea-unsigned.ipa
+    artifacts:
+      - build/ios/iphoneos/prod-chequea-unsigned.ipa
       - /tmp/xcodebuild_logs/*.log

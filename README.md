@@ -14,10 +14,28 @@ MVP móvil desarrollado con Flutter.
 Las claves se inyectan al compilar; no se leen desde archivos incluidos en la aplicación. Para ejecutar la app en el emulador, crea `config/secrets.json` a partir de `config/secrets.example.json` y usa:
 
 ```powershell
-flutter run --dart-define-from-file=config/secrets.json
+# Preproducción
+flutter run --dart-define-from-file=config/secrets.prepro.json
+
+# Producción
+flutter build appbundle --release --dart-define-from-file=config/secrets.production.json
 ```
 
 No basta con hacer *hot reload* tras cambiar las claves: detén la aplicación y ejecútala de nuevo con el comando anterior.
+
+## Codemagic (iOS Prepro y Producción)
+
+En Codemagic, crea dos grupos de variables seguras:
+
+- `chequea_prepro`: variable secreta multilínea `SECRETS_PREPRO_JSON`
+  con el contenido completo de `config/secrets.prepro.json`.
+- `chequea_production`: variable secreta multilínea `SECRETS_PRODUCTION_JSON`
+  con el contenido completo de `config/secrets.production.json`.
+
+Ejecuta `ios-prepro-unsigned` o `ios-production-unsigned` según el entorno.
+Cada workflow valida el entorno y la URL de Panamá antes de compilar y entrega
+su propio IPA sin firma. Estos IPA son para pruebas o firma posterior; para
+distribuir en App Store se requiere configurar la firma de Apple.
 
 ## Getting Started
 

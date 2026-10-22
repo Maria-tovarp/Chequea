@@ -47,6 +47,8 @@ app.*.map.json
 # Local API configuration. Copy config/env.example.json to config/env.json.
 /config/env.json
 /config/secrets.json
+/config/secrets.prepro.json
+/config/secrets.production.json
 
 # Local browser/session artifacts
 /cookies.txt

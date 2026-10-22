@@ -13,26 +13,18 @@ class CountryOption {
 class AppConfig {
   const AppConfig._();
 
-  static const apiBaseUrl = String.fromEnvironment(
-    'CHEQUEA_API_BASE_URL',
-    defaultValue: 'https://api.example.com',
+  static const appEnv = String.fromEnvironment(
+    'CHEQUEA_APP_ENV',
+    defaultValue: 'prepro',
   );
 
-  static const apiKey = String.fromEnvironment('CHEQUEA_API_KEY');
+  static const panamaApiKey = String.fromEnvironment('PANAMA_API_KEY');
+  static const panamaBaseUrl = String.fromEnvironment('PANAMA_BASE_URL');
 
   static const panama = CountryOption(
     code: 'panama',
     name: 'Panamá',
     flag: '🇵🇦',
-  );
-
-  static String apiKeyForCountry(String country) {
-    return const String.fromEnvironment('PANAMA_API_KEY');
-  }
-
-  static const environment = String.fromEnvironment(
-    'CHEQUEA_APP_ENV',
-    defaultValue: 'development',
   );
 
   static const List<CountryOption> countries = [panama];
@@ -42,13 +34,23 @@ class AppConfig {
     return normalized == 'panamá' || normalized == 'panama';
   }
 
-  static bool get hasApiKey => apiKey.isNotEmpty;
+  static String apiKeyForCountry(String country) {
+    return isSupportedCountry(country) ? panamaApiKey : '';
+  }
+
+  static String baseUrlForCountry(String country) {
+    return isSupportedCountry(country) ? panamaBaseUrl : '';
+  }
+
+  static bool get hasApiKey => panamaApiKey.isNotEmpty;
 
   static CountryConfig forCountry(String country) {
-    return const CountryConfig(
-      country: 'Panamá',
-      loginUrl: 'https://chequeandome.com/chequea/sesion/login/',
-      websiteUrl: 'https://chequeandome.com/chequea/sesion/login/',
+    final baseUrl = baseUrlForCountry(panama.name);
+    return CountryConfig(
+      country: panama.name,
+      baseUrl: baseUrl,
+      loginUrl: '$baseUrl/chequea/sesion/login/',
+      websiteUrl: '$baseUrl/chequea/sesion/login/',
       apiKeyEnvironment: 'PANAMA_API_KEY',
     );
   }
@@ -57,15 +59,20 @@ class AppConfig {
 class CountryConfig {
   const CountryConfig({
     required this.country,
+    required this.baseUrl,
     required this.loginUrl,
     required this.websiteUrl,
     required this.apiKeyEnvironment,
   });
 
   final String country;
+  final String baseUrl;
   final String loginUrl;
   final String websiteUrl;
   final String apiKeyEnvironment;
+
+  String get apiBaseUrl => '$baseUrl/api';
+  String get chequeaApiBaseUrl => '$apiBaseUrl/chequea-api/v1';
 
   String apiKeyFor(String selectedCountry) =>
       AppConfig.apiKeyForCountry(selectedCountry);
