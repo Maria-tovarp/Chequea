@@ -18,7 +18,21 @@ workflows:
           umask 077
           mkdir -p config
           printf '%s\n' "$SECRETS_PREPRO_JSON" > config/secrets.prepro.json
-          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); expected={"CHEQUEA_APP_ENV","PANAMA_API_KEY","GUATEMALA_API_KEY","PANAMA_BASE_URL","GUATEMALA_BASE_URL"}; assert set(d)==expected and d["CHEQUEA_APP_ENV"]=="prepro" and d["PANAMA_API_KEY"] and d["PANAMA_BASE_URL"].startswith("https://"), "Configuración Prepro inválida"' config/secrets.prepro.json
+          python3 -c '
+          import json, sys
+          from pathlib import Path
+          raw = Path(sys.argv[1]).read_text(encoding="utf-8-sig").strip()
+          if not raw.startswith("{"):
+              sys.exit("SECRETS_PREPRO_JSON debe contener el JSON completo; revisa el valor en Codemagic.")
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError:
+              sys.exit("SECRETS_PREPRO_JSON contiene JSON inválido; revisa comillas, comas y saltos de línea.")
+          required = {"CHEQUEA_APP_ENV", "PANAMA_API_KEY", "GUATEMALA_API_KEY", "PANAMA_BASE_URL", "GUATEMALA_BASE_URL"}
+          if set(data) != required or data["CHEQUEA_APP_ENV"] != "prepro" or not data["PANAMA_API_KEY"] or not data["PANAMA_BASE_URL"].startswith("https://"):
+              sys.exit("SECRETS_PREPRO_JSON tiene campos faltantes o un entorno/URL de Panamá incorrectos.")
+          print("Configuración Prepro válida")
+          ' config/secrets.prepro.json
       - name: Preparar iOS
         script: |
           set -e
@@ -64,7 +78,21 @@ workflows:
           umask 077
           mkdir -p config
           printf '%s\n' "$SECRETS_PRODUCTION_JSON" > config/secrets.production.json
-          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); expected={"CHEQUEA_APP_ENV","PANAMA_API_KEY","GUATEMALA_API_KEY","PANAMA_BASE_URL","GUATEMALA_BASE_URL"}; assert set(d)==expected and d["CHEQUEA_APP_ENV"]=="production" and d["PANAMA_API_KEY"] and d["PANAMA_BASE_URL"].startswith("https://"), "Configuración Producción inválida"' config/secrets.production.json
+          python3 -c '
+          import json, sys
+          from pathlib import Path
+          raw = Path(sys.argv[1]).read_text(encoding="utf-8-sig").strip()
+          if not raw.startswith("{"):
+              sys.exit("SECRETS_PRODUCTION_JSON debe contener el JSON completo; revisa el valor en Codemagic.")
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError:
+              sys.exit("SECRETS_PRODUCTION_JSON contiene JSON inválido; revisa comillas, comas y saltos de línea.")
+          required = {"CHEQUEA_APP_ENV", "PANAMA_API_KEY", "GUATEMALA_API_KEY", "PANAMA_BASE_URL", "GUATEMALA_BASE_URL"}
+          if set(data) != required or data["CHEQUEA_APP_ENV"] != "production" or not data["PANAMA_API_KEY"] or not data["PANAMA_BASE_URL"].startswith("https://"):
+              sys.exit("SECRETS_PRODUCTION_JSON tiene campos faltantes o un entorno/URL de Panamá incorrectos.")
+          print("Configuración Producción válida")
+          ' config/secrets.production.json
       - name: Preparar iOS
         script: |
           set -e

@@ -8,6 +8,8 @@ import '../models/user_session.dart';
 import 'session_expiration.dart';
 
 class AuthService {
+  static const defaultServicesSearchTextMaxLength = 140;
+
   const AuthService({http.Client? client, String? apiKey})
     : _client = client,
       _apiKey = apiKey;
@@ -424,6 +426,46 @@ class AuthService {
       return uri != null && uri.hasScheme ? uri : null;
     } on Exception {
       return null;
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
+  /// Retrieves the server-defined maximum length for service-search text.
+  ///
+  /// The default keeps the search usable when the configuration endpoint is
+  /// temporarily unavailable or returns an older payload.
+  Future<int> getServicesSearchTextMaxLength(UserSession session) async {
+    final config = AppConfig.forCountry(session.country);
+    final apiKey = _apiKey ?? config.apiKeyFor(session.country);
+    if (apiKey.isEmpty) return defaultServicesSearchTextMaxLength;
+    final ownsClient = _client == null;
+    final client = _client ?? http.Client();
+    try {
+      final response = await client
+          .get(
+            Uri.parse(
+              '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/app_config',
+            ),
+            headers: {
+              'Accept': 'application/json',
+              'x-api-key': apiKey,
+              'Authorization': 'Bearer ${session.accessToken}',
+            },
+          )
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return defaultServicesSearchTextMaxLength;
+      }
+      final searchConfig = _payload(response)['services_text_search'];
+      final limit = searchConfig is Map
+          ? int.tryParse(searchConfig['text_max_length']?.toString() ?? '')
+          : null;
+      return limit != null && limit > 0
+          ? limit
+          : defaultServicesSearchTextMaxLength;
+    } on Exception {
+      return defaultServicesSearchTextMaxLength;
     } finally {
       if (ownsClient) client.close();
     }

@@ -11,7 +11,7 @@ import 'referred_appointments_page.dart';
 import 'home_page.dart';
 import '../services/sent_messages_service.dart';
 import '../widgets/app_notice_dialog.dart';
-import '../widgets/commissions_coming_soon_dialog.dart';
+import 'commissions_page.dart';
 
 class SentMessagesPage extends StatefulWidget {
   const SentMessagesPage({super.key, required this.session});
@@ -1154,7 +1154,7 @@ class _DateBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: const Color(0xFFE0F6E8),
         borderRadius: BorderRadius.circular(12),
@@ -1163,7 +1163,7 @@ class _DateBadge extends StatelessWidget {
         'Enviado',
         style: TextStyle(
           color: Color(0xFF07843F),
-          fontSize: 9,
+          fontSize: 12,
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -1240,7 +1240,9 @@ class _SentMessagesBottomMenu extends StatelessWidget {
             child: _BottomMenuItem(
               label: 'Comisiones',
               asset: 'assets/svg/Icono de comisiones - líneas gris.svg',
-              onPressed: () => showCommissionsComingSoonDialog(context),
+              onPressed: () => Navigator.of(context).pushReplacement(
+                appPageRoute(CommissionsPage(session: session)),
+              ),
             ),
           ),
         ],

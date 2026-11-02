@@ -209,10 +209,54 @@ class _ChequeaAppState extends State<ChequeaApp> with WidgetsBindingObserver {
     ),
     builder: (context, child) {
       final isAndroid = Theme.of(context).platform == TargetPlatform.android;
+      final mediaQuery = MediaQuery.of(context);
       return Stack(
         fit: StackFit.expand,
         children: [
           ?child,
+          // Keep the intended colors behind Android's transparent system bars.
+          if (isAndroid && mediaQuery.viewPadding.left > 0)
+            Positioned(
+              top: 0,
+              left: 0,
+              bottom: 0,
+              width: mediaQuery.viewPadding.left,
+              child: const IgnorePointer(
+                child: ColoredBox(color: Color(0xFF24364B)),
+              ),
+            ),
+          if (isAndroid && mediaQuery.viewPadding.right > 0)
+            Positioned(
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: mediaQuery.viewPadding.right,
+              child: const IgnorePointer(
+                child: ColoredBox(color: Color(0xFF24364B)),
+              ),
+            ),
+          if (isAndroid && mediaQuery.viewPadding.top > 0)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: mediaQuery.viewPadding.top,
+              child: const IgnorePointer(
+                child: ColoredBox(color: Colors.white),
+              ),
+            ),
+          if (isAndroid &&
+              mediaQuery.viewPadding.bottom > 0 &&
+              mediaQuery.viewInsets.bottom == 0)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: mediaQuery.viewPadding.bottom,
+              child: const IgnorePointer(
+                child: ColoredBox(color: Color(0xFF24364B)),
+              ),
+            ),
           if (_showInitialSplash)
             ColoredBox(
               key: const ValueKey('initial-splash'),

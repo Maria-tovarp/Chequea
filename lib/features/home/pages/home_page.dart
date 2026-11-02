@@ -30,7 +30,7 @@ import '../services/home_draft_store.dart';
 import '../services/home_local_data_store.dart';
 import '../widgets/app_bottom_menu.dart';
 import '../widgets/app_notice_dialog.dart';
-import '../widgets/commissions_coming_soon_dialog.dart';
+import 'commissions_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -76,6 +76,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String? _displayNameOverride;
   Timer? _profileSyncTimer;
   bool _syncingProfile = false;
+  int _servicesSearchTextMaxLength =
+      AuthService.defaultServicesSearchTextMaxLength;
 
   @override
   void initState() {
@@ -88,11 +90,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (mounted) setState(() => _isPlayingAudio = false);
     });
     _restoreDraft();
+    unawaited(_loadServicesSearchTextMaxLength());
     unawaited(_syncProfile());
     _profileSyncTimer = Timer.periodic(
       _profileSyncInterval,
       (_) => _syncProfile(),
     );
+  }
+
+  Future<void> _loadServicesSearchTextMaxLength() async {
+    final session = _session;
+    final limit = await _authService.getServicesSearchTextMaxLength(session);
+    if (!mounted || !identical(_session, session)) return;
+    setState(() => _servicesSearchTextMaxLength = limit);
   }
 
   @override
@@ -865,7 +875,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  void _openCommissions() => showCommissionsComingSoonDialog(context);
+  void _openCommissions() => Navigator.of(context).pushReplacement(
+    appPageRoute(CommissionsPage(session: _session)),
+  );
 
   void _selectInputMode(String mode) {
     final nextMode = _inputMode == mode ? 'exams' : mode;
@@ -1297,6 +1309,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             if (_inputMode == 'exams') ...[
                               _ExamSelector(
                                 session: _session,
+                                searchTextMaxLength:
+                                    _servicesSearchTextMaxLength,
                                 onSelected: _addExam,
                                 onSessionRefresh: _refreshSessionForRequest,
                                 onSessionExpired: _handleSessionExpired,
@@ -1521,12 +1535,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 class _ExamSelector extends StatefulWidget {
   const _ExamSelector({
     required this.session,
+    required this.searchTextMaxLength,
     required this.onSelected,
     required this.onSessionRefresh,
     required this.onSessionExpired,
     required this.onSearchActivity,
   });
   final UserSession session;
+  final int searchTextMaxLength;
   final ValueChanged<_ExamOption> onSelected;
   final Future<UserSession?> Function() onSessionRefresh;
   final Future<void> Function() onSessionExpired;
@@ -1970,8 +1986,16 @@ class _SecondaryModeAction extends StatelessWidget {
 }
 
 class _ExamSelectorState extends State<_ExamSelector> {
+  // A short pause avoids launching a server search for every character while
+  // still keeping the selector responsive once the user stops typing.
+  static const _searchDebounce = Duration(milliseconds: 350);
+  static const _maxCachedSearches = 50;
+
   final _search = TextEditingController();
   final _searchFocus = FocusNode();
+  final Map<String, List<_ExamOption>> _searchCache = {};
+  http.Client? _activeSearchClient;
+  Timer? _searchDebounceTimer;
   bool _expanded = false;
   bool _loading = false;
   int _searchRequestId = 0;
@@ -1983,6 +2007,18 @@ class _ExamSelectorState extends State<_ExamSelector> {
     _searchFocus.addListener(_collapseWhenUnfocused);
   }
 
+  @override
+  void didUpdateWidget(covariant _ExamSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.searchTextMaxLength == widget.searchTextMaxLength ||
+        _search.text.length <= widget.searchTextMaxLength) {
+      return;
+    }
+    _search.value = LengthLimitingTextInputFormatter(
+      widget.searchTextMaxLength,
+    ).formatEditUpdate(const TextEditingValue(), _search.value);
+  }
+
   void _collapseWhenUnfocused() {
     if (!_searchFocus.hasFocus && mounted && _expanded) {
       setState(() => _expanded = false);
@@ -1992,15 +2028,26 @@ class _ExamSelectorState extends State<_ExamSelector> {
 
   @override
   void dispose() {
+    _searchDebounceTimer?.cancel();
+    _activeSearchClient?.close();
     _searchFocus.removeListener(_collapseWhenUnfocused);
     _search.dispose();
     _searchFocus.dispose();
     super.dispose();
   }
 
-  Future<void> _searchServices(String value) async {
+  void _scheduleSearch(String value) {
     final query = value.trim();
+    // Invalidate an active request as soon as the text changes, rather than
+    // letting an older response replace the results during the debounce.
     final requestId = ++_searchRequestId;
+    _searchDebounceTimer?.cancel();
+    // A timer can be cancelled, but an HTTP request already underway cannot.
+    // Closing its dedicated client releases the stale request instead of
+    // allowing it to contend with the search the user is now asking for.
+    _activeSearchClient?.close();
+    _activeSearchClient = null;
+
     if (query.length < 2) {
       setState(() {
         _results = const [];
@@ -2008,11 +2055,30 @@ class _ExamSelectorState extends State<_ExamSelector> {
       });
       return;
     }
+
+    final cachedResults = _searchCache[query.toLowerCase()];
+    if (cachedResults != null) {
+      setState(() {
+        _results = cachedResults;
+        _loading = false;
+      });
+      return;
+    }
+
     setState(() => _loading = true);
+    _searchDebounceTimer = Timer(
+      _searchDebounce,
+      () => _searchServices(query, requestId),
+    );
+  }
+
+  Future<void> _searchServices(String query, int requestId) async {
     final country = AppConfig.forCountry(widget.session.country);
     final apiKey = country.apiKeyFor(widget.session.country);
+    final client = http.Client();
+    _activeSearchClient = client;
     try {
-      Future<http.Response> search(UserSession session) => http.get(
+      Future<http.Response> search(UserSession session) => client.get(
         Uri.parse(
           '${Uri.parse(country.loginUrl).origin}/api/chequea-api/v1/services/search',
         ).replace(queryParameters: {'q': query}),
@@ -2047,6 +2113,7 @@ class _ExamSelectorState extends State<_ExamSelector> {
                 .toList()
           : <_ExamOption>[];
       if (mounted && requestId == _searchRequestId) {
+        _cacheResults(query, items);
         setState(() => _results = items);
       }
     } on Exception {
@@ -2054,9 +2121,22 @@ class _ExamSelectorState extends State<_ExamSelector> {
         setState(() => _results = const []);
       }
     } finally {
+      client.close();
+      if (identical(_activeSearchClient, client)) {
+        _activeSearchClient = null;
+      }
       if (mounted && requestId == _searchRequestId) {
         setState(() => _loading = false);
       }
+    }
+  }
+
+  void _cacheResults(String query, List<_ExamOption> items) {
+    final cacheKey = query.toLowerCase();
+    _searchCache.remove(cacheKey);
+    _searchCache[cacheKey] = List.unmodifiable(items);
+    if (_searchCache.length > _maxCachedSearches) {
+      _searchCache.remove(_searchCache.keys.first);
     }
   }
 
@@ -2115,9 +2195,21 @@ class _ExamSelectorState extends State<_ExamSelector> {
               controller: _search,
               focusNode: _searchFocus,
               autofocus: true,
+              maxLength: widget.searchTextMaxLength,
+              maxLengthEnforcement: MaxLengthEnforcement.enforced,
+              buildCounter:
+                  (
+                    context, {
+                    required currentLength,
+                    required isFocused,
+                    maxLength,
+                  }) => null,
+              inputFormatters: [
+                LengthLimitingTextInputFormatter(widget.searchTextMaxLength),
+              ],
               onChanged: (value) {
                 widget.onSearchActivity(value.trim().isNotEmpty);
-                _searchServices(value);
+                _scheduleSearch(value);
               },
               style: const TextStyle(color: Color(0xFF1A1A1A)),
               decoration: const InputDecoration(

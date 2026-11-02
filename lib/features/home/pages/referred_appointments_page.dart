@@ -11,7 +11,7 @@ import 'sent_messages_page.dart';
 import 'home_page.dart';
 import '../services/referred_appointments_service.dart';
 import '../widgets/app_notice_dialog.dart';
-import '../widgets/commissions_coming_soon_dialog.dart';
+import 'commissions_page.dart';
 
 class ReferredAppointmentsPage extends StatefulWidget {
   const ReferredAppointmentsPage({super.key, required this.session});
@@ -1112,8 +1112,8 @@ class _AppointmentCardState extends State<_AppointmentCard> {
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 4,
+                    horizontal: 10,
+                    vertical: 6,
                   ),
                   decoration: BoxDecoration(
                     color: _statusBackground,
@@ -1123,7 +1123,7 @@ class _AppointmentCardState extends State<_AppointmentCard> {
                     _displayStatus,
                     style: TextStyle(
                       color: _statusColor,
-                      fontSize: 7,
+                      fontSize: 12,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -1313,7 +1313,9 @@ class _ReferencesBottomMenu extends StatelessWidget {
             child: _ReferencesMenuItem(
               label: 'Comisiones',
               asset: 'assets/svg/Icono de comisiones - líneas gris.svg',
-              onPressed: () => showCommissionsComingSoonDialog(context),
+              onPressed: () => Navigator.of(context).pushReplacement(
+                appPageRoute(CommissionsPage(session: session)),
+              ),
             ),
           ),
         ],

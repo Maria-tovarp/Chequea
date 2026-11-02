@@ -27,6 +27,40 @@ void main() {
     expect(hasValidCredentialsResponse(response), isTrue);
   });
 
+  test('obtiene el límite de búsqueda de exámenes desde app_config', () async {
+    final client = _FakeHttpClient(
+      http.Response('{"services_text_search":{"text_max_length":75}}', 200),
+    );
+    final limit = await AuthService(client: client, apiKey: 'test-key')
+        .getServicesSearchTextMaxLength(
+          const UserSession(
+            username: 'maria',
+            country: 'Panamá',
+            isChequeandomeAgent: false,
+            refreshToken: 'refresh',
+            accessToken: 'access',
+          ),
+        );
+
+    expect(limit, 75);
+  });
+
+  test('usa 140 si app_config no devuelve el límite de búsqueda', () async {
+    final client = _FakeHttpClient(http.Response('{}', 200));
+    final limit = await AuthService(client: client, apiKey: 'test-key')
+        .getServicesSearchTextMaxLength(
+          const UserSession(
+            username: 'maria',
+            country: 'Panamá',
+            isChequeandomeAgent: false,
+            refreshToken: 'refresh',
+            accessToken: 'access',
+          ),
+        );
+
+    expect(limit, AuthService.defaultServicesSearchTextMaxLength);
+  });
+
   test('detecta una cuenta que no es referente en la respuesta de la API', () {
     final response = http.Response(
       '{"errorcode":"cheq__auth_only_referrer_accounts_allowed"}',

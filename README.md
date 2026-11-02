@@ -11,7 +11,7 @@ MVP móvil desarrollado con Flutter.
 - `lib/features/auth/pages`: pantalla de acceso.
 - `lib/features/home/pages`: pantalla principal autenticada.
 
-Las claves se inyectan al compilar; no se leen desde archivos incluidos en la aplicación. Para ejecutar la app en el emulador, crea `config/secrets.json` a partir de `config/secrets.example.json` y usa:
+Las claves se inyectan al compilar; no se leen desde archivos incluidos en la aplicación. Para ejecutar la app en el emulador, usa los archivos locales `config/secrets.prepro.json` y `config/secrets.production.json`, basados en sus plantillas `.example.json`:
 
 ```powershell
 # Preproducción
@@ -31,6 +31,11 @@ En Codemagic, crea dos grupos de variables seguras:
   con el contenido completo de `config/secrets.prepro.json`.
 - `chequea_production`: variable secreta multilínea `SECRETS_PRODUCTION_JSON`
   con el contenido completo de `config/secrets.production.json`.
+
+En el valor de cada variable pega el objeto JSON completo, desde `{` hasta `}`,
+sin nombre de archivo, comillas externas ni bloque de Markdown. Marca la variable
+como **Secret**. Si cambias los JSON locales, actualiza también su valor en
+Codemagic: los archivos ignorados por Git no se sincronizan automáticamente.
 
 Ejecuta `ios-prepro-unsigned` o `ios-production-unsigned` según el entorno.
 Cada workflow valida el entorno y la URL de Panamá antes de compilar y entrega
