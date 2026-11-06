@@ -115,7 +115,9 @@ workflows:
         script: |
           set -e
           cd "$CM_BUILD_DIR"
-          flutter build ipa --release --dart-define-from-file=config/secrets.production.json
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist \
+            --dart-define-from-file=config/secrets.production.json
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
