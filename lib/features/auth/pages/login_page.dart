@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../../../core/config/app_config.dart';
@@ -360,12 +361,12 @@ class _FixedCountryLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
     label: 'País: Panamá',
-    child: const Row(
+    child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('🇵🇦', style: TextStyle(fontSize: 16)),
-        SizedBox(width: 7),
-        Text(
+        SvgPicture.asset('assets/svg/panama_flag.svg', width: 24, height: 16),
+        const SizedBox(width: 7),
+        const Text(
           'Panamá',
           style: TextStyle(
             color: Color(0xFF10264C),

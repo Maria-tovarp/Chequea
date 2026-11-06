@@ -59,13 +59,18 @@ workflows:
       - build/ios/iphoneos/prepro-chequea-unsigned.ipa
       - /tmp/xcodebuild_logs/*.log
 
-  ios-production-unsigned:
-    name: Chequea iOS Producción sin firma
+  ios-production-app-store:
+    name: Chequea iOS Producción - App Store
     instance_type: mac_mini_m2
     max_build_duration: 120
+    integrations:
+      app_store_connect: Chequea Apple Developer
     environment:
       groups:
         - chequea_production
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.chequea.chequeaApp
       flutter: 3.41.9
       xcode: 16.4
       cocoapods: default
@@ -101,20 +106,16 @@ workflows:
           flutter precache --ios
           cd ios
           pod install
-      - name: Compilar iOS Producción
+      - name: Configurar firma de App Store
+        script: |
+          set -eu
+          cd "$CM_BUILD_DIR"
+          xcode-project use-profiles
+      - name: Generar IPA de Producción firmado
         script: |
           set -e
           cd "$CM_BUILD_DIR"
-          flutter build ios --release --no-codesign --dart-define-from-file=config/secrets.production.json
-      - name: Crear IPA Producción sin firma
-        script: |
-          set -e
-          cd "$CM_BUILD_DIR/build/ios/iphoneos"
-          test -d Runner.app
-          mkdir -p Payload
-          cp -R Runner.app Payload/
-          ditto -c -k --sequesterRsrc --keepParent Payload prod-chequea-unsigned.ipa
-          test -f prod-chequea-unsigned.ipa
+          flutter build ipa --release --dart-define-from-file=config/secrets.production.json
     artifacts:
-      - build/ios/iphoneos/prod-chequea-unsigned.ipa
+      - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
