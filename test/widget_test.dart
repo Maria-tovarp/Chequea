@@ -137,6 +137,29 @@ void main() {
     expect(result.invalid, isTrue);
   });
 
+  test('guarda el refresh token rotado al renovar la sesion', () async {
+    final client = _FakeHttpClient(
+      http.Response(
+        '{"access_token":"access-nuevo","refresh_token":"refresh-nuevo"}',
+        200,
+      ),
+    );
+    final result = await AuthService(client: client, apiKey: 'test-key')
+        .refreshSession(
+          const UserSession(
+            username: 'maria',
+            country: 'Panama',
+            isChequeandomeAgent: false,
+            refreshToken: 'refresh-anterior',
+            accessToken: 'access-anterior',
+          ),
+        );
+
+    expect(result.session, isNotNull);
+    expect(result.session!.accessToken, 'access-nuevo');
+    expect(result.session!.refreshToken, 'refresh-nuevo');
+  });
+
   test('lee una referencia con paciente y servicios anidados', () {
     final appointment = ReferralAppointment.fromJson({
       'id': 16199,

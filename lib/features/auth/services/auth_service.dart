@@ -148,7 +148,8 @@ class AuthService {
           const {400, 401, 403, 404}.contains(response.statusCode)) {
         return const SessionRefreshResult.invalidCredentials();
       }
-      final accessToken = _payload(response)['access_token']?.toString();
+      final payload = _payload(response);
+      final accessToken = payload['access_token']?.toString();
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||
           accessToken == null ||
@@ -160,7 +161,11 @@ class AuthService {
           username: session.username,
           country: session.country,
           isChequeandomeAgent: session.isChequeandomeAgent,
-          refreshToken: session.refreshToken,
+          // Algunos entornos rotan el refresh token al solicitar un nuevo
+          // access token. Conservamos el nuevo valor para que la siguiente
+          // apertura de la app no reutilice uno ya invalidado.
+          refreshToken: _nonEmptyString(payload['refresh_token']) ??
+              session.refreshToken,
           accessToken: accessToken,
           fullName: session.fullName,
           email: session.email,
