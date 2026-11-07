@@ -22,6 +22,10 @@ class EditProfilePage extends StatefulWidget {
 }
 
 class _EditProfilePageState extends State<EditProfilePage> {
+  static const _profileDiagnosticsEnabled = bool.fromEnvironment(
+    'CHEQUEA_PROFILE_DIAGNOSTICS',
+  );
+  static const _slowProfileRequest = Duration(seconds: 4);
   final _fullName = TextEditingController();
   final _email = TextEditingController();
   final _cellphone = TextEditingController();
@@ -31,6 +35,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
   final _bankAccountHolder = TextEditingController();
   final _auth = const AuthService();
   final _imagePicker = ImagePicker();
+  final _profileDiagnostics = ValueNotifier<List<_ProfileRequestDiagnostic>>(
+    const [],
+  );
   UserSession? _session;
   String? _photoPath;
   String? _specialty;
@@ -45,6 +52,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   bool _submitted = false;
   bool _hasUnsavedChanges = false;
   bool _applyingRemoteProfile = false;
+  bool _profileDiagnosticDialogVisible = false;
   int _profileLoadVersion = 0;
 
   @override
@@ -85,6 +93,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   @override
   void dispose() {
+    _profileDiagnostics.dispose();
     _fullName.dispose();
     _email.dispose();
     _cellphone.dispose();
@@ -178,19 +187,39 @@ class _EditProfilePageState extends State<EditProfilePage> {
     final loadVersion = _profileLoadVersion;
     // Primero validamos/actualizamos los datos del perfil y luego cargamos
     // las opciones del formulario. Las solicitudes no se ejecutan en paralelo.
+    final profileStopwatch = Stopwatch()..start();
     final profileResult = await _auth.getProfile(widget.session);
+    profileStopwatch.stop();
     if (!mounted) return;
     if (loadVersion != _profileLoadVersion) {
       return;
     }
+    _recordProfileDiagnostic(
+      _ProfileRequestDiagnostic(
+        endpoint: '/api/chequea-api/v1/account/profile',
+        statusCode: profileResult.statusCode,
+        duration: profileStopwatch.elapsed,
+        error: profileResult.error,
+      ),
+    );
     if (profileResult.invalid) {
       await _logout();
       return;
     }
 
+    final optionsStopwatch = Stopwatch()..start();
     final optionsResult = await _auth.getProfileOptions(widget.session);
+    optionsStopwatch.stop();
     if (!mounted) return;
     if (loadVersion != _profileLoadVersion) return;
+    _recordProfileDiagnostic(
+      _ProfileRequestDiagnostic(
+        endpoint: '/api/chequea-api/v1/app_config',
+        statusCode: optionsResult.statusCode,
+        duration: optionsStopwatch.elapsed,
+        error: optionsResult.error,
+      ),
+    );
     if (optionsResult.invalid) {
       await _logout();
       return;
@@ -211,6 +240,45 @@ class _EditProfilePageState extends State<EditProfilePage> {
         _bankAccountType = _normalizeOption(_bankAccountType, _bankAccountTypes);
         _bankName = _normalizeOption(_bankName, _banks);
       }
+    });
+  }
+
+  void _recordProfileDiagnostic(_ProfileRequestDiagnostic request) {
+    if (!_profileDiagnosticsEnabled || !mounted) return;
+    if (request.error == null && request.duration < _slowProfileRequest) {
+      return;
+    }
+    _profileDiagnostics.value = [..._profileDiagnostics.value, request];
+    if (_profileDiagnosticDialogVisible) return;
+    _profileDiagnosticDialogVisible = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _profileDiagnosticDialogVisible = false;
+        return;
+      }
+      unawaited(showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Diagnóstico de Mi perfil'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 360),
+            child: ValueListenableBuilder<List<_ProfileRequestDiagnostic>>(
+              valueListenable: _profileDiagnostics,
+              builder: (_, requests, _) => SingleChildScrollView(
+                child: Text(
+                  '${requests.map((request) => request.describe()).join('\n\n')}\n\nEste mensaje solo aparece en la compilación de diagnóstico.',
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        ),
+      ).whenComplete(() => _profileDiagnosticDialogVisible = false));
     });
   }
 
@@ -904,6 +972,27 @@ class _EditProfilePageState extends State<EditProfilePage> {
     borderRadius: BorderRadius.circular(15),
     borderSide: BorderSide(color: color, width: width),
   );
+}
+
+class _ProfileRequestDiagnostic {
+  const _ProfileRequestDiagnostic({
+    required this.endpoint,
+    required this.statusCode,
+    required this.duration,
+    this.error,
+  });
+
+  final String endpoint;
+  final int? statusCode;
+  final Duration duration;
+  final String? error;
+
+  String describe() {
+    final seconds = (duration.inMilliseconds / 1000).toStringAsFixed(2);
+    final status = statusCode?.toString() ?? 'sin respuesta HTTP';
+    final failure = error == null ? '' : '\nError: $error';
+    return '$endpoint\nHTTP: $status · Tiempo: ${seconds}s$failure';
+  }
 }
 
 class _ProfileCard extends StatelessWidget {

@@ -61,6 +61,25 @@ void main() {
     expect(limit, AuthService.defaultServicesSearchTextMaxLength);
   });
 
+  test('expone el estado HTTP al fallar la carga del perfil', () async {
+    final client = _FakeHttpClient(
+      http.Response('{"message":"Servicio no disponible"}', 503),
+    );
+    final result = await AuthService(client: client, apiKey: 'test-key')
+        .getProfile(
+          const UserSession(
+            username: 'maria',
+            country: 'Panamá',
+            isChequeandomeAgent: false,
+            refreshToken: 'refresh',
+            accessToken: 'access',
+          ),
+        );
+
+    expect(result.isSuccess, isFalse);
+    expect(result.statusCode, 503);
+  });
+
   test('detecta una cuenta que no es referente en la respuesta de la API', () {
     final response = http.Response(
       '{"errorcode":"cheq__auth_only_referrer_accounts_allowed"}',

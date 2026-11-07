@@ -253,12 +253,22 @@ class AuthService {
           .timeout(const Duration(seconds: 30));
       final profile = _payload(response);
       if (isSessionExpiredResponse(response)) {
-        return const ProfileResult.invalidCredentials();
+        return ProfileResult.invalidCredentials(statusCode: response.statusCode);
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return ProfileResult.failure(_error(profile));
+        return ProfileResult.failure(
+          _error(profile),
+          statusCode: response.statusCode,
+        );
       }
-      return ProfileResult.success(_sessionWithProfile(session, profile));
+      return ProfileResult.success(
+        _sessionWithProfile(session, profile),
+        statusCode: response.statusCode,
+      );
+    } on TimeoutException {
+      return const ProfileResult.failure(
+        'Tiempo de espera agotado.',
+      );
     } on Exception {
       return const ProfileResult.failure(
         'No se pudo conectar con el servicio.',
@@ -496,16 +506,28 @@ class AuthService {
           )
           .timeout(const Duration(seconds: 30));
       if (isSessionExpiredResponse(response)) {
-        return const ProfileOptionsResult.invalidCredentials();
+        return ProfileOptionsResult.invalidCredentials(
+          statusCode: response.statusCode,
+        );
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return const ProfileOptionsResult.failure();
+        return ProfileOptionsResult.failure(
+          error: _error(_payload(response)),
+          statusCode: response.statusCode,
+        );
       }
       return ProfileOptionsResult.success(
         ProfileOptions.fromJson(_payload(response)),
+        statusCode: response.statusCode,
+      );
+    } on TimeoutException {
+      return const ProfileOptionsResult.failure(
+        error: 'Tiempo de espera agotado.',
       );
     } on Exception {
-      return const ProfileOptionsResult.failure();
+      return const ProfileOptionsResult.failure(
+        error: 'No se pudo conectar con el servicio.',
+      );
     } finally {
       if (ownsClient) client.close();
     }
@@ -527,13 +549,22 @@ class SessionRefreshResult {
 }
 
 class ProfileResult {
-  const ProfileResult._({this.session, this.error, this.invalid = false});
-  const ProfileResult.success(UserSession session) : this._(session: session);
-  const ProfileResult.failure(String error) : this._(error: error);
-  const ProfileResult.invalidCredentials() : this._(invalid: true);
+  const ProfileResult._({
+    this.session,
+    this.error,
+    this.invalid = false,
+    this.statusCode,
+  });
+  const ProfileResult.success(UserSession session, {int? statusCode})
+    : this._(session: session, statusCode: statusCode);
+  const ProfileResult.failure(String error, {int? statusCode})
+    : this._(error: error, statusCode: statusCode);
+  const ProfileResult.invalidCredentials({int? statusCode})
+    : this._(invalid: true, statusCode: statusCode);
   final UserSession? session;
   final String? error;
   final bool invalid;
+  final int? statusCode;
   bool get isSuccess => session != null;
 }
 
@@ -562,12 +593,22 @@ class ProfileOptions {
 }
 
 class ProfileOptionsResult {
-  const ProfileOptionsResult._(this.options, {this.invalid = false});
-  const ProfileOptionsResult.success(ProfileOptions options) : this._(options);
-  const ProfileOptionsResult.failure() : this._(null);
-  const ProfileOptionsResult.invalidCredentials() : this._(null, invalid: true);
+  const ProfileOptionsResult._(
+    this.options, {
+    this.invalid = false,
+    this.error,
+    this.statusCode,
+  });
+  const ProfileOptionsResult.success(ProfileOptions options, {int? statusCode})
+    : this._(options, statusCode: statusCode);
+  const ProfileOptionsResult.failure({String? error, int? statusCode})
+    : this._(null, error: error, statusCode: statusCode);
+  const ProfileOptionsResult.invalidCredentials({int? statusCode})
+    : this._(null, invalid: true, statusCode: statusCode);
   final ProfileOptions? options;
   final bool invalid;
+  final String? error;
+  final int? statusCode;
   bool get isSuccess => options != null;
 }
 
