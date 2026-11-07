@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -42,7 +43,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
   bool _saving = false;
   bool _pickingPhoto = false;
   bool _submitted = false;
-  bool _loadingProfile = true;
+  bool _hasUnsavedChanges = false;
+  bool _applyingRemoteProfile = false;
   int _profileLoadVersion = 0;
 
   @override
@@ -59,7 +61,26 @@ class _EditProfilePageState extends State<EditProfilePage> {
     _bankAccountType = widget.session.bankAccountType;
     _bankName = widget.session.bankName;
     _bankAccountHolder.text = widget.session.bankAccountHolder ?? '';
-    _initialize();
+    _watchUserEdits();
+    unawaited(_initialize());
+  }
+
+  void _watchUserEdits() {
+    for (final controller in [
+      _fullName,
+      _email,
+      _cellphone,
+      _password,
+      _repeatPassword,
+      _bankAccountNumber,
+      _bankAccountHolder,
+    ]) {
+      controller.addListener(_markUserEdited);
+    }
+  }
+
+  void _markUserEdited() {
+    if (!_applyingRemoteProfile) _hasUnsavedChanges = true;
   }
 
   @override
@@ -127,7 +148,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
       await temporary.rename(destination.path);
 
       if (!mounted) return;
-      setState(() => _photoPath = destination.path);
+      setState(() {
+        _photoPath = destination.path;
+        _hasUnsavedChanges = true;
+      });
     } on Exception {
       if (mounted) _showPhotoError();
     }
@@ -144,55 +168,69 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Future<void> _initialize() async {
-    await _recoverLostPhoto();
-    await _load();
+    // La pantalla ya tiene una sesiÃ³n con los datos conocidos. No retrasamos
+    // su apertura esperando la red ni la recuperaciÃ³n opcional del selector.
+    unawaited(_recoverLostPhoto());
+    unawaited(_load());
   }
 
   Future<void> _load() async {
     final loadVersion = _profileLoadVersion;
-    final results = await Future.wait<Object>([
-      _auth.getProfile(widget.session),
-      _auth.getProfileOptions(widget.session),
-    ]);
+    // Primero validamos/actualizamos los datos del perfil y luego cargamos
+    // las opciones del formulario. Las solicitudes no se ejecutan en paralelo.
+    final profileResult = await _auth.getProfile(widget.session);
     if (!mounted) return;
     if (loadVersion != _profileLoadVersion) {
-      setState(() => _loadingProfile = false);
       return;
     }
-    final profileResult = results[0] as ProfileResult;
-    final optionsResult = results[1] as ProfileOptionsResult;
-    if (profileResult.invalid || optionsResult.invalid) {
+    if (profileResult.invalid) {
       await _logout();
       return;
     }
-    if (profileResult.isSuccess) {
-      _applyProfile(profileResult.session!);
+
+    final optionsResult = await _auth.getProfileOptions(widget.session);
+    if (!mounted) return;
+    if (loadVersion != _profileLoadVersion) return;
+    if (optionsResult.invalid) {
+      await _logout();
+      return;
     }
-    if (optionsResult.isSuccess) {
-      final options = optionsResult.options!;
-      _medicalSpecialties = options.medicalSpecialties;
-      _bankAccountTypes = options.bankAccountTypes;
-      _banks = options.banks;
-      _specialty = _normalizeOption(_specialty, _medicalSpecialties);
-      _specialtyTitle = _optionTitleFor(_specialty, _medicalSpecialties);
-      _bankAccountType = _normalizeOption(_bankAccountType, _bankAccountTypes);
-      _bankName = _normalizeOption(_bankName, _banks);
-    }
-    if (mounted) setState(() => _loadingProfile = false);
+    setState(() {
+      if (profileResult.isSuccess) {
+        // No sobrescribimos cambios que el usuario haya empezado a editar
+        // mientras las solicitudes terminaban en segundo plano.
+        if (!_hasUnsavedChanges) _applyProfile(profileResult.session!);
+      }
+      if (optionsResult.isSuccess) {
+        final options = optionsResult.options!;
+        _medicalSpecialties = options.medicalSpecialties;
+        _bankAccountTypes = options.bankAccountTypes;
+        _banks = options.banks;
+        _specialty = _normalizeOption(_specialty, _medicalSpecialties);
+        _specialtyTitle = _optionTitleFor(_specialty, _medicalSpecialties);
+        _bankAccountType = _normalizeOption(_bankAccountType, _bankAccountTypes);
+        _bankName = _normalizeOption(_bankName, _banks);
+      }
+    });
   }
 
   void _applyProfile(UserSession session) {
-    _session = session;
-    _fullName.text = session.fullName ?? '';
-    _email.text = session.email ?? '';
-    _cellphone.text = session.cellphone ?? '';
-    _photoPath = session.doctorPhotoPath;
-    _specialty = session.specialty;
-    _specialtyTitle = session.specialtyTitle;
-    _bankAccountNumber.text = session.bankAccountNumber ?? '';
-    _bankAccountType = session.bankAccountType;
-    _bankName = session.bankName;
-    _bankAccountHolder.text = session.bankAccountHolder ?? '';
+    _applyingRemoteProfile = true;
+    try {
+      _session = session;
+      _fullName.text = session.fullName ?? '';
+      _email.text = session.email ?? '';
+      _cellphone.text = session.cellphone ?? '';
+      _photoPath = session.doctorPhotoPath;
+      _specialty = session.specialty;
+      _specialtyTitle = session.specialtyTitle;
+      _bankAccountNumber.text = session.bankAccountNumber ?? '';
+      _bankAccountType = session.bankAccountType;
+      _bankName = session.bankName;
+      _bankAccountHolder.text = session.bankAccountHolder ?? '';
+    } finally {
+      _applyingRemoteProfile = false;
+    }
   }
 
   String? _normalizeOption(String? value, List<ProfileOption> options) {
@@ -405,11 +443,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       ),
       body: SafeArea(
         top: false,
-        child: _loadingProfile
-            ? const Center(
-                child: CircularProgressIndicator(color: Color(0xFF009FA4)),
-              )
-            : Align(
+        child: Align(
                 alignment: Alignment.topCenter,
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 440),
@@ -520,6 +554,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                                           icon: Icons.medical_services_outlined,
                                           items: _medicalSpecialties,
                                           onChanged: (value) => setState(() {
+                                            _hasUnsavedChanges = true;
                                             _specialty = value;
                                             _specialtyTitle = _optionTitleFor(
                                               value,
@@ -683,8 +718,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
                                 selectedTitle: _bankAccountType,
                                 icon: Icons.account_balance_wallet_outlined,
                                 items: _bankAccountTypes,
-                                onChanged: (value) =>
-                                    setState(() => _bankAccountType = value),
+                                onChanged: (value) => setState(() {
+                                  _hasUnsavedChanges = true;
+                                  _bankAccountType = value;
+                                }),
                               ),
                               _dropdownField(
                                 label: 'Banco',
@@ -692,8 +729,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
                                 selectedTitle: _bankName,
                                 icon: Icons.account_balance_outlined,
                                 items: _banks,
-                                onChanged: (value) =>
-                                    setState(() => _bankName = value),
+                                onChanged: (value) => setState(() {
+                                  _hasUnsavedChanges = true;
+                                  _bankName = value;
+                                }),
                               ),
                               _field(
                                 'Nombre del dueño de la cuenta',
