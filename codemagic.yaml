@@ -244,7 +244,8 @@ workflows:
           cd "$CM_BUILD_DIR"
           flutter build ipa --release \
             --export-options-plist=/Users/builder/export_options.plist \
-            --dart-define-from-file=config/secrets.production.json
+            --dart-define-from-file=config/secrets.production.json \
+            --dart-define=CHEQUEA_PROFILE_DIAGNOSTICS=true
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
