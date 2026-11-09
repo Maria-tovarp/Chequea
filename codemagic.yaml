@@ -121,7 +121,6 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-
   ios-prepro-profile-diagnostics:
     name: Chequea iOS Prepro - Diagnóstico de perfil
     instance_type: mac_mini_m2
@@ -248,3 +247,8 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        # Carga la IPA a App Store Connect con la integración ya configurada.
+        # No se envía a TestFlight ni a revisión automáticamente.
+        auth: integration
