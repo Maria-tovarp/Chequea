@@ -198,7 +198,7 @@ workflows:
         distribution_type: app_store
         bundle_identifier: com.chequea.chequeaApp
       flutter: 3.41.9
-      xcode: 16.4
+      xcode: 26
       cocoapods: default
     scripts:
       - name: Crear configuración Producción
