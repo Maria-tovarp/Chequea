@@ -123,8 +123,8 @@ workflows:
       - /tmp/xcodebuild_logs/*.log
   # El workflow de diagnóstico de perfil fue retirado: Prepro normal usa
   # ios-prepro-app-store, sin habilitar CHEQUEA_PROFILE_DIAGNOSTICS.
-  ios-production-ipa:
-    name: Chequea iOS Produccion - IPA firmado
+  ios-production-app-store:
+    name: Chequea iOS Producción - App Store
     instance_type: mac_mini_m2
     max_build_duration: 120
     integrations:
@@ -186,8 +186,8 @@ workflows:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
 
-  ios-production-app-store:
-    name: Chequea iOS Producción - App Store
+  ios-production-upload-app-store:
+    name: Chequea iOS Producción - Subir a Apple
     instance_type: mac_mini_m2
     max_build_duration: 120
     integrations:
