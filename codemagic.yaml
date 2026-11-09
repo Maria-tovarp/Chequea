@@ -123,8 +123,8 @@ workflows:
       - /tmp/xcodebuild_logs/*.log
   # El workflow de diagnóstico de perfil fue retirado: Prepro normal usa
   # ios-prepro-app-store, sin habilitar CHEQUEA_PROFILE_DIAGNOSTICS.
-  ios-production-ad-hoc:
-    name: Chequea iOS Produccion - iPhone fisico (Ad Hoc)
+  ios-production-ipa:
+    name: Chequea iOS Produccion - IPA firmado
     instance_type: mac_mini_m2
     max_build_duration: 120
     integrations:
@@ -133,7 +133,7 @@ workflows:
       groups:
         - chequea_production
       ios_signing:
-        distribution_type: ad_hoc
+        distribution_type: app_store
         bundle_identifier: com.chequea.chequeaApp
       flutter: 3.41.9
       xcode: 26
@@ -170,12 +170,12 @@ workflows:
           flutter precache --ios
           cd ios
           pod install
-      - name: Configurar firma Ad Hoc
+      - name: Configurar firma de App Store
         script: |
           set -eu
           cd "$CM_BUILD_DIR"
           xcode-project use-profiles
-      - name: Generar IPA de Produccion para iPhone fisico
+      - name: Generar IPA de Produccion firmado
         script: |
           set -e
           cd "$CM_BUILD_DIR"
