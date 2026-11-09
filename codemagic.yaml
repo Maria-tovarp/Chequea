@@ -123,6 +123,69 @@ workflows:
       - /tmp/xcodebuild_logs/*.log
   # El workflow de diagnóstico de perfil fue retirado: Prepro normal usa
   # ios-prepro-app-store, sin habilitar CHEQUEA_PROFILE_DIAGNOSTICS.
+  ios-production-ad-hoc:
+    name: Chequea iOS Produccion - iPhone fisico (Ad Hoc)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      app_store_connect: Chequea Apple Developer
+    environment:
+      groups:
+        - chequea_production
+      ios_signing:
+        distribution_type: ad_hoc
+        bundle_identifier: com.chequea.chequeaApp
+      flutter: 3.41.9
+      xcode: 26
+      cocoapods: default
+    scripts:
+      - name: Crear configuracion Produccion
+        script: |
+          set -eu
+          cd "$CM_BUILD_DIR"
+          : "${SECRETS_PRODUCTION_JSON:?Falta SECRETS_PRODUCTION_JSON}"
+          umask 077
+          mkdir -p config
+          printf '%s\n' "$SECRETS_PRODUCTION_JSON" > config/secrets.production.json
+          python3 -c '
+          import json, sys
+          from pathlib import Path
+          raw = Path(sys.argv[1]).read_text(encoding="utf-8-sig").strip()
+          if not raw.startswith("{"):
+              sys.exit("SECRETS_PRODUCTION_JSON debe contener el JSON completo; revisa el valor en Codemagic.")
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError:
+              sys.exit("SECRETS_PRODUCTION_JSON contiene JSON invalido; revisa comillas, comas y saltos de linea.")
+          required = {"CHEQUEA_APP_ENV", "PANAMA_API_KEY", "GUATEMALA_API_KEY", "PANAMA_BASE_URL", "GUATEMALA_BASE_URL"}
+          if set(data) != required or data["CHEQUEA_APP_ENV"] != "production" or not data["PANAMA_API_KEY"] or not data["PANAMA_BASE_URL"].startswith("https://"):
+              sys.exit("SECRETS_PRODUCTION_JSON tiene campos faltantes o un entorno/URL de Panama incorrectos.")
+          print("Configuracion Produccion valida")
+          ' config/secrets.production.json
+      - name: Preparar iOS
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          flutter pub get
+          flutter precache --ios
+          cd ios
+          pod install
+      - name: Configurar firma Ad Hoc
+        script: |
+          set -eu
+          cd "$CM_BUILD_DIR"
+          xcode-project use-profiles
+      - name: Generar IPA de Produccion para iPhone fisico
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist \
+            --dart-define-from-file=config/secrets.production.json
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
   ios-production-app-store:
     name: Chequea iOS Producción - App Store
     instance_type: mac_mini_m2
