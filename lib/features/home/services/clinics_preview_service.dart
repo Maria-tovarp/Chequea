@@ -25,7 +25,7 @@ class ClinicsPreviewService {
           .join('&');
       final response = await client.get(
         Uri.parse(
-          '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/services/clinics_preview?$query',
+          '${config.baseUrl}/api/chequea-api/v1/services/clinics_preview?$query',
         ),
         headers: {
           'Accept': 'application/json',

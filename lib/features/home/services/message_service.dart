@@ -32,7 +32,7 @@ class MessageService {
           http.MultipartRequest(
               'POST',
               Uri.parse(
-                '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/messages/mode/$mode',
+                '${config.baseUrl}/api/chequea-api/v1/messages/mode/$mode',
               ),
             )
             ..headers.addAll({
@@ -51,7 +51,17 @@ class MessageService {
         request.fields['plaintext_services'] = plaintextServices.trim();
       }
       if (filePath != null) {
-        request.files.add(await http.MultipartFile.fromPath('file', filePath));
+        final isM4aAudio = filePath.toLowerCase().endsWith('.m4a');
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'file',
+            filePath,
+            // The HTTP package otherwise sends files as application/octet-stream.
+            // Windows voice notes are AAC in an M4A container, whose standard
+            // media type is audio/mp4.
+            contentType: isM4aAudio ? http.MediaType('audio', 'mp4') : null,
+          ),
+        );
       }
 
       final response = await http.Response.fromStream(

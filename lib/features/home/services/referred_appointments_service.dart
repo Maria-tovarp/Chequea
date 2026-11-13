@@ -50,7 +50,7 @@ class ReferredAppointmentsService {
     final client = _client ?? http.Client();
     try {
       final uri = Uri.parse(
-        '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/referred_appointments',
+        '${config.baseUrl}/api/chequea-api/v1/referred_appointments',
       ).replace(queryParameters: query);
       final response = await client
           .get(

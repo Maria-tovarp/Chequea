@@ -40,8 +40,9 @@ class CommissionsService {
             )
             .timeout(const Duration(seconds: 30)),
       ]);
-      if (responses.any(isSessionExpiredResponse))
+      if (responses.any(isSessionExpiredResponse)) {
         throw const CommissionsException.sessionExpired();
+      }
       final commissions = _json(responses[0].body);
       final payments = _json(responses[1].body);
       if (responses.any(
@@ -49,8 +50,9 @@ class CommissionsService {
                 response.statusCode < 200 || response.statusCode >= 300,
           ) ||
           commissions is! Map ||
-          payments is! List)
+          payments is! List) {
         throw const CommissionsException();
+      }
       return CommissionsData.fromJson(
         Map<String, dynamic>.from(commissions),
         payments.whereType<Map>().map(Map<String, dynamic>.from).toList(),

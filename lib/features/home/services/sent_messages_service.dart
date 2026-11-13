@@ -90,7 +90,7 @@ class SentMessagesService {
       final response = await client
           .get(
             Uri.parse(
-              '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/messages/history',
+              '${config.baseUrl}/api/chequea-api/v1/messages/history',
             ).replace(queryParameters: query),
             headers: {
               'Accept': 'application/json',
