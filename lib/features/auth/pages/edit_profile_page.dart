@@ -578,7 +578,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
           actions: [
             Row(
               children: [
-                Expanded(
+                SizedBox(
+                  width: 104,
                   child: OutlinedButton(
                     onPressed: () => Navigator.of(dialogContext).pop(false),
                     style: OutlinedButton.styleFrom(
@@ -589,7 +590,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: const Text('Cancelar'),
+                    child: const Text(
+                      'Cancelar',
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -610,6 +615,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     child: const Text(
                       'Eliminar mi cuenta',
                       textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),
