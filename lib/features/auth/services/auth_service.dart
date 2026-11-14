@@ -34,7 +34,7 @@ class AuthService {
       final basic = base64Encode(utf8.encode('$username:$password'));
       final refreshResponse = await client
           .post(
-            Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth'),
+            Uri.parse('${config.baseUrl}/api/auth'),
             headers: {
               'Accept': 'application/json',
               'x-api-key': apiKey,
@@ -59,7 +59,7 @@ class AuthService {
       }
       final accessResponse = await client
           .post(
-            Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth/access'),
+            Uri.parse('${config.baseUrl}/api/auth/access'),
             headers: {
               'Accept': 'application/json',
               'x-api-key': apiKey,
@@ -77,9 +77,7 @@ class AuthService {
       }
       final profileResponse = await client
           .get(
-            Uri.parse(
-              '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/account/profile',
-            ),
+            Uri.parse('${config.baseUrl}/api/chequea-api/v1/account/profile'),
             headers: {
               'Accept': 'application/json',
               'x-api-key': apiKey,
@@ -136,7 +134,7 @@ class AuthService {
     try {
       final response = await client
           .post(
-            Uri.parse('${Uri.parse(config.loginUrl).origin}/api/auth/access'),
+            Uri.parse('${config.baseUrl}/api/auth/access'),
             headers: {
               'Accept': 'application/json',
               'x-api-key': apiKey,
@@ -161,11 +159,8 @@ class AuthService {
           username: session.username,
           country: session.country,
           isChequeandomeAgent: session.isChequeandomeAgent,
-          // Algunos entornos rotan el refresh token al solicitar un nuevo
-          // access token. Conservamos el nuevo valor para que la siguiente
-          // apertura de la app no reutilice uno ya invalidado.
-          refreshToken: _nonEmptyString(payload['refresh_token']) ??
-              session.refreshToken,
+          refreshToken:
+              _nonEmptyString(payload['refresh_token']) ?? session.refreshToken,
           accessToken: accessToken,
           fullName: session.fullName,
           email: session.email,
@@ -203,7 +198,7 @@ class AuthService {
           http.MultipartRequest(
               'POST',
               Uri.parse(
-                '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/account/forgot_password',
+                '${config.baseUrl}/api/chequea-api/v1/account/forgot_password',
               ),
             )
             ..headers.addAll({
@@ -230,7 +225,7 @@ class AuthService {
 
   Future<ProfileResult> getProfile(UserSession session) async {
     final config = AppConfig.forCountry(session.country);
-    final apiKey = config.apiKeyFor(session.country);
+    final apiKey = _apiKey ?? config.apiKeyFor(session.country);
     if (apiKey.isEmpty) {
       return const ProfileResult.failure(
         'Falta configurar la clave de acceso de la aplicación.',
@@ -241,9 +236,7 @@ class AuthService {
     try {
       final response = await client
           .get(
-            Uri.parse(
-              '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/account/profile',
-            ),
+            Uri.parse('${config.baseUrl}/api/chequea-api/v1/account/profile'),
             headers: {
               'Accept': 'application/json',
               'x-api-key': apiKey,
@@ -253,7 +246,9 @@ class AuthService {
           .timeout(const Duration(seconds: 30));
       final profile = _payload(response);
       if (isSessionExpiredResponse(response)) {
-        return ProfileResult.invalidCredentials(statusCode: response.statusCode);
+        return ProfileResult.invalidCredentials(
+          statusCode: response.statusCode,
+        );
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return ProfileResult.failure(
@@ -266,11 +261,57 @@ class AuthService {
         statusCode: response.statusCode,
       );
     } on TimeoutException {
-      return const ProfileResult.failure(
-        'Tiempo de espera agotado.',
-      );
+      return const ProfileResult.failure('Tiempo de espera agotado.');
     } on Exception {
       return const ProfileResult.failure(
+        'No se pudo conectar con el servicio.',
+      );
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
+  Future<AccountDeletionResult> deleteAccount(UserSession session) async {
+    final config = AppConfig.forCountry(session.country);
+    final apiKey = _apiKey ?? config.apiKeyFor(session.country);
+    if (apiKey.isEmpty) {
+      return const AccountDeletionResult.failure(
+        'Falta configurar la clave de acceso de la aplicación.',
+      );
+    }
+    final ownsClient = _client == null;
+    final client = _client ?? http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('${config.baseUrl}/api/chequea-api/v1/account/delete'),
+            headers: {
+              'Accept': 'application/json',
+              'x-api-key': apiKey,
+              'Authorization': 'Bearer ${session.accessToken}',
+            },
+          )
+          .timeout(const Duration(seconds: 30));
+      final payload = _payload(response);
+      if (isSessionExpiredResponse(response) ||
+          response.statusCode < 200 ||
+          response.statusCode >= 300) {
+        return AccountDeletionResult.failure(
+          _error(payload),
+          statusCode: response.statusCode,
+        );
+      }
+      if (payload['success'] != true) {
+        return AccountDeletionResult.failure(
+          _error(payload),
+          statusCode: response.statusCode,
+        );
+      }
+      return AccountDeletionResult.success(statusCode: response.statusCode);
+    } on TimeoutException {
+      return const AccountDeletionResult.failure('Tiempo de espera agotado.');
+    } on Exception {
+      return const AccountDeletionResult.failure(
         'No se pudo conectar con el servicio.',
       );
     } finally {
@@ -320,7 +361,7 @@ class AuthService {
           http.MultipartRequest(
               'POST',
               Uri.parse(
-                '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/account/profile/update',
+                '${config.baseUrl}/api/chequea-api/v1/account/profile/update',
               ),
             )
             ..headers.addAll({
@@ -390,9 +431,7 @@ class AuthService {
     final client = _client ?? http.Client();
     try {
       final response = await client.post(
-        Uri.parse(
-          '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/account/register',
-        ),
+        Uri.parse('${config.baseUrl}/api/chequea-api/v1/account/register'),
         headers: {'Accept': 'application/json', 'x-api-key': apiKey},
         body: {
           'username': username,
@@ -427,9 +466,7 @@ class AuthService {
     final client = _client ?? http.Client();
     try {
       final response = await client.get(
-        Uri.parse(
-          '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/app_config',
-        ),
+        Uri.parse('${config.baseUrl}/api/chequea-api/v1/app_config'),
         headers: {'Accept': 'application/json', 'x-api-key': apiKey},
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -446,10 +483,6 @@ class AuthService {
     }
   }
 
-  /// Retrieves the server-defined maximum length for service-search text.
-  ///
-  /// The default keeps the search usable when the configuration endpoint is
-  /// temporarily unavailable or returns an older payload.
   Future<int> getServicesSearchTextMaxLength(UserSession session) async {
     final config = AppConfig.forCountry(session.country);
     final apiKey = _apiKey ?? config.apiKeyFor(session.country);
@@ -459,9 +492,7 @@ class AuthService {
     try {
       final response = await client
           .get(
-            Uri.parse(
-              '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/app_config',
-            ),
+            Uri.parse('${config.baseUrl}/api/chequea-api/v1/app_config'),
             headers: {
               'Accept': 'application/json',
               'x-api-key': apiKey,
@@ -495,9 +526,7 @@ class AuthService {
     try {
       final response = await client
           .get(
-            Uri.parse(
-              '${Uri.parse(config.loginUrl).origin}/api/chequea-api/v1/app_config',
-            ),
+            Uri.parse('${config.baseUrl}/api/chequea-api/v1/app_config'),
             headers: {
               'Accept': 'application/json',
               'x-api-key': apiKey,
@@ -566,6 +595,24 @@ class ProfileResult {
   final bool invalid;
   final int? statusCode;
   bool get isSuccess => session != null;
+}
+
+class AccountDeletionResult {
+  const AccountDeletionResult._({
+    required this.deleted,
+    this.error,
+    this.statusCode,
+  });
+
+  const AccountDeletionResult.success({int? statusCode})
+    : this._(deleted: true, statusCode: statusCode);
+
+  const AccountDeletionResult.failure(String error, {int? statusCode})
+    : this._(deleted: false, error: error, statusCode: statusCode);
+
+  final bool deleted;
+  final String? error;
+  final int? statusCode;
 }
 
 class ProfileOption {

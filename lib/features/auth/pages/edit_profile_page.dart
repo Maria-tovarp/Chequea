@@ -48,6 +48,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   List<ProfileOption> _bankAccountTypes = const [];
   List<ProfileOption> _banks = const [];
   bool _saving = false;
+  bool _deletingAccount = false;
   bool _pickingPhoto = false;
   bool _submitted = false;
   bool _hasUnsavedChanges = false;
@@ -237,7 +238,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
         _banks = options.banks;
         _specialty = _normalizeOption(_specialty, _medicalSpecialties);
         _specialtyTitle = _optionTitleFor(_specialty, _medicalSpecialties);
-        _bankAccountType = _normalizeOption(_bankAccountType, _bankAccountTypes);
+        _bankAccountType = _normalizeOption(
+          _bankAccountType,
+          _bankAccountTypes,
+        );
         _bankName = _normalizeOption(_bankName, _banks);
       }
     });
@@ -256,29 +260,31 @@ class _EditProfilePageState extends State<EditProfilePage> {
         _profileDiagnosticDialogVisible = false;
         return;
       }
-      unawaited(showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Diagnóstico de Mi perfil'),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 360),
-            child: ValueListenableBuilder<List<_ProfileRequestDiagnostic>>(
-              valueListenable: _profileDiagnostics,
-              builder: (_, requests, _) => SingleChildScrollView(
-                child: Text(
-                  '${requests.map((request) => request.describe()).join('\n\n')}\n\nEste mensaje solo aparece en la compilación de diagnóstico.',
+      unawaited(
+        showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Diagnóstico de Mi perfil'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: ValueListenableBuilder<List<_ProfileRequestDiagnostic>>(
+                valueListenable: _profileDiagnostics,
+                builder: (_, requests, _) => SingleChildScrollView(
+                  child: Text(
+                    '${requests.map((request) => request.describe()).join('\n\n')}\n\nEste mensaje solo aparece en la compilación de diagnóstico.',
+                  ),
                 ),
               ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cerrar'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cerrar'),
-            ),
-          ],
-        ),
-      ).whenComplete(() => _profileDiagnosticDialogVisible = false));
+        ).whenComplete(() => _profileDiagnosticDialogVisible = false),
+      );
     });
   }
 
@@ -480,6 +486,167 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
   }
 
+  Future<void> _confirmAccountDeletion() async {
+    if (_deletingAccount || !(Platform.isAndroid || Platform.isIOS)) return;
+    final confirmation = TextEditingController();
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+          titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          title: Column(
+            children: const [
+              CircleAvatar(
+                radius: 25,
+                backgroundColor: Color(0xFFFFEEF0),
+                child: Icon(
+                  Icons.warning_amber_rounded,
+                  color: Color(0xFFD63B4A),
+                  size: 30,
+                ),
+              ),
+              SizedBox(height: 14),
+              Text(
+                '¿Deseas eliminar tu cuenta?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF10264C),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 12),
+              const Text(
+                'Esta acción una vez realizada es definitiva. No podrás volver a ingresar a tu cuenta ni beneficiarte de comisiones u otras recompensas.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF435678),
+                  fontSize: 14,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                'Para eliminar tu cuenta, escribe ELIMINAR en la caja a continuación y toca “Eliminar mi cuenta”.',
+                style: TextStyle(
+                  color: Color(0xFF435678),
+                  fontSize: 13,
+                  height: 1.35,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: confirmation,
+                autofocus: true,
+                textCapitalization: TextCapitalization.characters,
+                onChanged: (_) => setDialogState(() {}),
+                decoration: InputDecoration(
+                  hintText: 'Escribe ELIMINAR',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFD5DEF0)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFD5DEF0)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: Color(0xFFD63B4A),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          actions: [
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF009FA4),
+                      minimumSize: const Size.fromHeight(50),
+                      side: const BorderSide(color: Color(0xFFB7E8E5)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: confirmation.text == 'ELIMINAR'
+                        ? () => Navigator.of(dialogContext).pop(true)
+                        : null,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFD63B4A),
+                      disabledBackgroundColor: const Color(0xFFE4E6EA),
+                      minimumSize: const Size.fromHeight(50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Eliminar mi cuenta',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    confirmation.dispose();
+    if (shouldDelete == true && mounted) await _deleteAccount();
+  }
+
+  Future<void> _deleteAccount() async {
+    final session = _session;
+    if (session == null || _deletingAccount) return;
+    setState(() => _deletingAccount = true);
+    final result = await _auth.deleteAccount(session);
+    if (!mounted) return;
+    if (!result.deleted) {
+      setState(() => _deletingAccount = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.error ?? 'No fue posible eliminar tu cuenta.'),
+        ),
+      );
+      return;
+    }
+    await HomeLocalDataStore.clearFor(session);
+    await SessionStore.clear();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (_) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) => PopScope<UserSession>(
     canPop: false,
@@ -512,348 +679,368 @@ class _EditProfilePageState extends State<EditProfilePage> {
       body: SafeArea(
         top: false,
         child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _ProfileCard(
+                    icon: Icons.person_outline_rounded,
+                    title: 'Información personal',
+                    subtitle: 'Datos de la cuenta',
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _ProfileCard(
-                          icon: Icons.person_outline_rounded,
-                          title: 'Información personal',
-                          subtitle: 'Datos de la cuenta',
-                          child: Column(
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  InkWell(
-                                    onTap: _pickingPhoto ? null : _pickPhoto,
-                                    borderRadius: BorderRadius.circular(38),
-                                    child: Container(
-                                      width: 108,
-                                      height: 108,
-                                      decoration: const BoxDecoration(
-                                        color: Color(0xFFE5F8F7),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      clipBehavior: Clip.antiAlias,
-                                      child: Stack(
-                                        fit: StackFit.expand,
-                                        children: [
-                                          if (_photoPath == null)
-                                            const Icon(
-                                              Icons.add_a_photo_outlined,
-                                              color: Color(0xFF009FA4),
-                                            )
-                                          else if (!_isLocalPhoto)
-                                            Image.network(
-                                              _photoPath!,
-                                              fit: BoxFit.cover,
-                                              cacheWidth: 152,
-                                              cacheHeight: 152,
-                                              errorBuilder: (_, _, _) =>
-                                                  const Icon(
-                                                    Icons.add_a_photo_outlined,
-                                                    color: Color(0xFF009FA4),
-                                                  ),
-                                            )
-                                          else
-                                            Image.file(
-                                              File(_photoPath!),
-                                              fit: BoxFit.cover,
-                                              cacheWidth: 152,
-                                              cacheHeight: 152,
-                                              errorBuilder: (_, _, _) =>
-                                                  const Icon(
-                                                    Icons.add_a_photo_outlined,
-                                                    color: Color(0xFF009FA4),
-                                                  ),
-                                            ),
-                                          if (_pickingPhoto)
-                                            const ColoredBox(
-                                              color: Color(0x66000000),
-                                              child: Center(
-                                                child: SizedBox(
-                                                  width: 24,
-                                                  height: 24,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2.5,
-                                                        color: Colors.white,
-                                                      ),
-                                                ),
-                                              ),
-                                            ),
-                                          const Positioned(
-                                            right: 4,
-                                            bottom: 4,
-                                            child: CircleAvatar(
-                                              radius: 16,
-                                              backgroundColor: Color(
-                                                0xFF009FA4,
-                                              ),
-                                              child: Icon(
-                                                Icons.camera_alt_outlined,
-                                                size: 17,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      children: [
-                                        _field(
-                                          'Nombre completo',
-                                          _fullName,
-                                          Icons.badge_outlined,
-                                        ),
-                                        _dropdownField(
-                                          label: 'Especialidad',
-                                          value: _specialty,
-                                          selectedTitle: _specialtyTitle,
-                                          icon: Icons.medical_services_outlined,
-                                          items: _medicalSpecialties,
-                                          onChanged: (value) => setState(() {
-                                            _hasUnsavedChanges = true;
-                                            _specialty = value;
-                                            _specialtyTitle = _optionTitleFor(
-                                              value,
-                                              _medicalSpecialties,
-                                            );
-                                          }),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              _field(
-                                'Correo electrónico',
-                                _email,
-                                Icons.email_outlined,
-                                keyboardType: TextInputType.emailAddress,
-                                error: _emailError,
-                              ),
-                              _field(
-                                'Celular',
-                                _cellphone,
-                                Icons.phone_outlined,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                error:
-                                    _submitted && _cellphone.text.trim().isEmpty
-                                    ? 'Ingresa tu número de celular.'
-                                    : null,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        _ProfileCard(
-                          icon: Icons.lock_outline_rounded,
-                          title: 'Seguridad',
-                          subtitle: 'Actualiza tu contraseña si lo deseas.',
-                          child: Column(
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 16),
-                                child: TextFormField(
-                                  initialValue: widget.session.username,
-                                  readOnly: true,
-                                  enableInteractiveSelection: true,
-                                  style: const TextStyle(fontSize: 14),
-                                  decoration: InputDecoration(
-                                    labelText: 'Nombre de usuario',
-                                    helperText:
-                                        'El nombre de usuario no se puede cambiar.',
-                                    helperStyle: const TextStyle(fontSize: 11),
-                                    prefixIcon: const Icon(
-                                      Icons.person_outline,
-                                    ),
-                                    suffixIcon: const Icon(
-                                      Icons.lock_outline,
-                                      size: 18,
-                                    ),
-                                    filled: true,
-                                    fillColor: const Color(0xFFF4F7FA),
-                                    border: _fieldBorder(),
-                                    enabledBorder: _fieldBorder(),
-                                  ),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            InkWell(
+                              onTap: _pickingPhoto ? null : _pickPhoto,
+                              borderRadius: BorderRadius.circular(38),
+                              child: Container(
+                                width: 108,
+                                height: 108,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFE5F8F7),
+                                  shape: BoxShape.circle,
                                 ),
-                              ),
-                              Container(
-                                margin: const EdgeInsets.only(bottom: 16),
-                                padding: const EdgeInsets.all(13),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF4FBFB),
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: const Color(0xFFD8F0ED),
-                                  ),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                clipBehavior: Clip.antiAlias,
+                                child: Stack(
+                                  fit: StackFit.expand,
                                   children: [
-                                    Icon(
-                                      Icons.lock_outline_rounded,
-                                      color: Color(0xFF009FA4),
-                                      size: 20,
-                                    ),
-                                    SizedBox(width: 9),
-                                    Expanded(
-                                      child: RichText(
-                                        text: const TextSpan(
-                                          style: TextStyle(
-                                            color: Color(0xFF435678),
-                                            fontSize: 13,
-                                            height: 1.3,
+                                    if (_photoPath == null)
+                                      const Icon(
+                                        Icons.add_a_photo_outlined,
+                                        color: Color(0xFF009FA4),
+                                      )
+                                    else if (!_isLocalPhoto)
+                                      Image.network(
+                                        _photoPath!,
+                                        fit: BoxFit.cover,
+                                        cacheWidth: 152,
+                                        cacheHeight: 152,
+                                        errorBuilder: (_, _, _) => const Icon(
+                                          Icons.add_a_photo_outlined,
+                                          color: Color(0xFF009FA4),
+                                        ),
+                                      )
+                                    else
+                                      Image.file(
+                                        File(_photoPath!),
+                                        fit: BoxFit.cover,
+                                        cacheWidth: 152,
+                                        cacheHeight: 152,
+                                        errorBuilder: (_, _, _) => const Icon(
+                                          Icons.add_a_photo_outlined,
+                                          color: Color(0xFF009FA4),
+                                        ),
+                                      ),
+                                    if (_pickingPhoto)
+                                      const ColoredBox(
+                                        color: Color(0x66000000),
+                                        child: Center(
+                                          child: SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.5,
+                                              color: Colors.white,
+                                            ),
                                           ),
-                                          children: [
-                                            TextSpan(
-                                              text: 'Cambiar contraseña\n',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            TextSpan(
-                                              text:
-                                                  'Déjalo vacío si no deseas modificarla.',
-                                            ),
-                                          ],
+                                        ),
+                                      ),
+                                    const Positioned(
+                                      right: 4,
+                                      bottom: 4,
+                                      child: CircleAvatar(
+                                        radius: 16,
+                                        backgroundColor: Color(0xFF009FA4),
+                                        child: Icon(
+                                          Icons.camera_alt_outlined,
+                                          size: 17,
+                                          color: Colors.white,
                                         ),
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                              _field(
-                                'Contraseña nueva',
-                                _password,
-                                Icons.lock_outline,
-                                obscure: true,
-                                required: false,
-                              ),
-                              _field(
-                                'Repetir contraseña nueva',
-                                _repeatPassword,
-                                Icons.lock_outline,
-                                obscure: true,
-                                required: false,
-                                error:
-                                    _submitted &&
-                                        _password.text.isNotEmpty &&
-                                        _password.text != _repeatPassword.text
-                                    ? 'Las contraseñas deben coincidir.'
-                                    : null,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        _ProfileCard(
-                          icon: Icons.account_balance_outlined,
-                          title: 'Información de pago',
-                          subtitle:
-                              'Cuenta bancaria donde recibirás tus comisiones. Los campos con * son obligatorios.',
-                          child: Column(
-                            children: [
-                              _field(
-                                'Número de cuenta bancaria',
-                                _bankAccountNumber,
-                                Icons.account_balance_outlined,
-                                error: _bankAccountNumberError(
-                                  _bankAccountNumber.text,
-                                ),
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  _field(
+                                    'Nombre completo',
+                                    _fullName,
+                                    Icons.badge_outlined,
+                                  ),
+                                  _dropdownField(
+                                    label: 'Especialidad',
+                                    value: _specialty,
+                                    selectedTitle: _specialtyTitle,
+                                    icon: Icons.medical_services_outlined,
+                                    items: _medicalSpecialties,
+                                    onChanged: (value) => setState(() {
+                                      _hasUnsavedChanges = true;
+                                      _specialty = value;
+                                      _specialtyTitle = _optionTitleFor(
+                                        value,
+                                        _medicalSpecialties,
+                                      );
+                                    }),
+                                  ),
                                 ],
                               ),
-                              _dropdownField(
-                                label: 'Tipo de cuenta',
-                                value: _bankAccountType,
-                                selectedTitle: _bankAccountType,
-                                icon: Icons.account_balance_wallet_outlined,
-                                items: _bankAccountTypes,
-                                onChanged: (value) => setState(() {
-                                  _hasUnsavedChanges = true;
-                                  _bankAccountType = value;
-                                }),
-                              ),
-                              _dropdownField(
-                                label: 'Banco',
-                                value: _bankName,
-                                selectedTitle: _bankName,
-                                icon: Icons.account_balance_outlined,
-                                items: _banks,
-                                onChanged: (value) => setState(() {
-                                  _hasUnsavedChanges = true;
-                                  _bankName = value;
-                                }),
-                              ),
-                              _field(
-                                'Nombre del dueño de la cuenta',
-                                _bankAccountHolder,
-                                Icons.person_outline_rounded,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          height: 54,
-                          child: FilledButton.icon(
-                            style: FilledButton.styleFrom(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(15),
-                              ),
-                              textStyle: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                              ),
                             ),
-                            onPressed: _saving ? null : _save,
-                            icon: _saving
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.save_rounded, size: 22),
-                            label: const Text('GUARDAR CAMBIOS'),
-                          ),
+                          ],
                         ),
-                        const SizedBox(height: 18),
-                        TextButton.icon(
-                          onPressed: _logout,
-                          icon: const Icon(Icons.logout_rounded),
-                          label: const Text('Cerrar sesión'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: const Color(0xFFD63B4A),
-                            textStyle: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                        const SizedBox(height: 4),
+                        _field(
+                          'Correo electrónico',
+                          _email,
+                          Icons.email_outlined,
+                          keyboardType: TextInputType.emailAddress,
+                          error: _emailError,
+                        ),
+                        _field(
+                          'Celular',
+                          _cellphone,
+                          Icons.phone_outlined,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          error: _submitted && _cellphone.text.trim().isEmpty
+                              ? 'Ingresa tu número de celular.'
+                              : null,
                         ),
                       ],
                     ),
                   ),
-                ),
+                  const SizedBox(height: 18),
+                  _ProfileCard(
+                    icon: Icons.lock_outline_rounded,
+                    title: 'Seguridad',
+                    subtitle: 'Actualiza tu contraseña si lo deseas.',
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: TextFormField(
+                            initialValue: widget.session.username,
+                            readOnly: true,
+                            enableInteractiveSelection: true,
+                            style: const TextStyle(fontSize: 14),
+                            decoration: InputDecoration(
+                              labelText: 'Nombre de usuario',
+                              helperText:
+                                  'El nombre de usuario no se puede cambiar.',
+                              helperStyle: const TextStyle(fontSize: 11),
+                              prefixIcon: const Icon(Icons.person_outline),
+                              suffixIcon: const Icon(
+                                Icons.lock_outline,
+                                size: 18,
+                              ),
+                              filled: true,
+                              fillColor: const Color(0xFFF4F7FA),
+                              border: _fieldBorder(),
+                              enabledBorder: _fieldBorder(),
+                            ),
+                          ),
+                        ),
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(13),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF4FBFB),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: const Color(0xFFD8F0ED)),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.lock_outline_rounded,
+                                color: Color(0xFF009FA4),
+                                size: 20,
+                              ),
+                              SizedBox(width: 9),
+                              Expanded(
+                                child: RichText(
+                                  text: const TextSpan(
+                                    style: TextStyle(
+                                      color: Color(0xFF435678),
+                                      fontSize: 13,
+                                      height: 1.3,
+                                    ),
+                                    children: [
+                                      TextSpan(
+                                        text: 'Cambiar contraseña\n',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text:
+                                            'Déjalo vacío si no deseas modificarla.',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        _field(
+                          'Contraseña nueva',
+                          _password,
+                          Icons.lock_outline,
+                          obscure: true,
+                          required: false,
+                        ),
+                        _field(
+                          'Repetir contraseña nueva',
+                          _repeatPassword,
+                          Icons.lock_outline,
+                          obscure: true,
+                          required: false,
+                          error:
+                              _submitted &&
+                                  _password.text.isNotEmpty &&
+                                  _password.text != _repeatPassword.text
+                              ? 'Las contraseñas deben coincidir.'
+                              : null,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  _ProfileCard(
+                    icon: Icons.account_balance_outlined,
+                    title: 'Información de pago',
+                    subtitle:
+                        'Cuenta bancaria donde recibirás tus comisiones. Los campos con * son obligatorios.',
+                    child: Column(
+                      children: [
+                        _field(
+                          'Número de cuenta bancaria',
+                          _bankAccountNumber,
+                          Icons.account_balance_outlined,
+                          error: _bankAccountNumberError(
+                            _bankAccountNumber.text,
+                          ),
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                        ),
+                        _dropdownField(
+                          label: 'Tipo de cuenta',
+                          value: _bankAccountType,
+                          selectedTitle: _bankAccountType,
+                          icon: Icons.account_balance_wallet_outlined,
+                          items: _bankAccountTypes,
+                          onChanged: (value) => setState(() {
+                            _hasUnsavedChanges = true;
+                            _bankAccountType = value;
+                          }),
+                        ),
+                        _dropdownField(
+                          label: 'Banco',
+                          value: _bankName,
+                          selectedTitle: _bankName,
+                          icon: Icons.account_balance_outlined,
+                          items: _banks,
+                          onChanged: (value) => setState(() {
+                            _hasUnsavedChanges = true;
+                            _bankName = value;
+                          }),
+                        ),
+                        _field(
+                          'Nombre del dueño de la cuenta',
+                          _bankAccountHolder,
+                          Icons.person_outline_rounded,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 54,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      onPressed: _saving ? null : _save,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.save_rounded, size: 22),
+                      label: const Text('GUARDAR CAMBIOS'),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  TextButton.icon(
+                    onPressed: _logout,
+                    icon: const Icon(Icons.logout_rounded),
+                    label: const Text('Cerrar sesión'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFFD63B4A),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (Platform.isAndroid || Platform.isIOS) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 54,
+                      child: OutlinedButton.icon(
+                        onPressed: _deletingAccount
+                            ? null
+                            : _confirmAccountDeletion,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFD63B4A),
+                          side: const BorderSide(color: Color(0xFFD63B4A)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        icon: _deletingAccount
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.delete_outline_rounded),
+                        label: const Text('ELIMINAR MI CUENTA'),
+                      ),
+                    ),
+                  ],
+                ],
               ),
+            ),
+          ),
+        ),
       ),
     ),
   );
